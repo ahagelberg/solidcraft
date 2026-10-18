@@ -47,6 +47,10 @@ pub struct State {
     created: Option<String>,
     /// The row picked last.
     selected: Option<String>,
+    /// Where the panel was drawn last frame (`None` while it is hidden).
+    panel_rect: Option<egui::Rect>,
+    /// The panel was the last thing clicked in, so F2 renames its rows (not the model's selection).
+    focused_panel: bool,
     /// The window was focused last frame (regaining focus refreshes the listing).
     focused: bool,
     /// An action asked for a new listing; the rows must not be put back.
@@ -58,6 +62,8 @@ pub struct State {
 struct Rename {
     path: String,
     name: String,
+    /// The field still has to select the whole name (typing then replaces it).
+    select_all: bool,
 }
 
 #[derive(Clone)]
@@ -133,21 +139,29 @@ enum Action {
     Properties { path: String, name: String },
 }
 
+/// How narrow and how wide the panel can be dragged.
+pub const WIDTH_MIN: f32 = 180.0;
+pub const WIDTH_MAX: f32 = 520.0;
+
 /// Draw the panel (and handle a design dropped from it, even while the panel is hidden).
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !app.services.designs_panel || !app.preferences.repositories_panel {
+        app.designs.panel_rect = None;
         return;
     }
     accept_drag(app, ui.ctx());
     if !app.ui.show_designs {
+        app.designs.panel_rect = None;
         return;
     }
     pump(app, ui.ctx());
     sync(app, ui.ctx());
     let t = Tokens::get();
+    let width = app.preferences.designs_width.clamp(WIDTH_MIN, WIDTH_MAX);
     let panel = egui::Panel::left("sc_designs")
-        .exact_size(280.0)
-        .resizable(false)
+        .default_size(width)
+        .size_range(WIDTH_MIN..=WIDTH_MAX)
+        .resizable(true)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
             repository_header(app, ui, &t);
@@ -158,9 +172,47 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.separator();
             rows(app, ui, &t);
         });
-    crate::scenario::publish_rect("designs:panel", panel.response.rect);
+    let rect = panel.response.rect;
+    crate::scenario::publish_rect("designs:panel", rect);
+    app.designs.panel_rect = Some(rect);
+    // The panel has the keyboard once it is clicked in (F2 renames its rows, not the model's).
+    if ui.ctx().input(|i| i.pointer.any_pressed()) {
+        app.designs.focused_panel = ui.ctx().input(|i| i.pointer.interact_pos()).is_some_and(|p| rect.contains(p));
+    }
+    let dragged = panel.response.rect.width();
+    if dragged.is_finite() && (WIDTH_MIN..=WIDTH_MAX).contains(&dragged) {
+        app.preferences.designs_width = dragged;
+    }
     confirm_delete(app, ui.ctx());
     crate::designs_properties::show(app, ui.ctx());
+}
+
+/// F2 over the panel: start renaming the selected row (a design or a folder), the way a file
+/// browser does. True when it took the key, so F2 doesn't also rename the model's selection.
+pub fn rename_selected(app: &mut SolveApp, ctx: &egui::Context) -> bool {
+    if !app.services.designs_panel || !app.preferences.repositories_panel || !app.ui.show_designs {
+        return false;
+    }
+    let hovered = app.designs.panel_rect.is_some_and(|r| ctx.pointer_hover_pos().is_some_and(|p| r.contains(p)));
+    if !hovered && !app.designs.focused_panel {
+        return false;
+    }
+    if app.designs.rename.is_some() {
+        return true;
+    }
+    let Some(path) = app.designs.selected.clone() else { return true };
+    let Some(entries) = &app.designs.entries else { return true };
+    let name = entries
+        .folders
+        .iter()
+        .map(|f| (&f.path, &f.name))
+        .chain(entries.designs.iter().map(|d| (&d.path, &d.name)))
+        .find(|(p, _)| p.as_str() == path)
+        .map(|(_, name)| name.clone());
+    if let Some(name) = name {
+        app.designs.rename = Some(Rename { path, name, select_all: true });
+    }
+    true
 }
 
 /// The repository shown: the chosen one, else the first.
@@ -605,6 +657,14 @@ fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str,
         if let Some(rename) = app.designs.rename.as_mut() {
             let response = ui.put(name_rect, egui::TextEdit::singleline(&mut rename.name).id(id).desired_width(name_rect.width()));
             response.request_focus();
+            if rename.select_all {
+                // The name starts selected, so typing replaces it (as a file browser does).
+                let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(rename.name.chars().count()));
+                state.cursor.set_char_range(Some(all));
+                state.store(ui.ctx(), id);
+                rename.select_all = false;
+            }
             if entered {
                 commit = Some(rename.name.trim().to_string());
             } else if escaped {
@@ -730,7 +790,7 @@ fn apply(app: &mut SolveApp, action: Action) {
     match action {
         Action::Open(path) => app.open_path_async(&path),
         Action::Insert(path) => insert_design(app, &path),
-        Action::Rename { path, name } => app.designs.rename = Some(Rename { path, name }),
+        Action::Rename { path, name } => app.designs.rename = Some(Rename { path, name, select_all: true }),
         Action::Move(path) => {
             app.pick_folder(move |app, destination| {
                 let Some(destination) = destination else { return };
