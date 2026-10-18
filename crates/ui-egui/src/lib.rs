@@ -897,6 +897,13 @@ impl SolveApp {
                         designs_panel::invalidate(self, &p);
                     }
                 }
+                // A file written next to the designs (an export, a mesh) is a row now: the
+                // panel lists the formats SolidCraft imports.
+                if matches!(id, "file.export" | "file.save_mesh")
+                    && let Some(p) = v.get("path").and_then(Value::as_str)
+                {
+                    designs_panel::invalidate(self, p);
+                }
             }
             Err(e) => {
                 let msg = friendly_error(id, e);
@@ -1652,7 +1659,12 @@ impl SolveApp {
         if agent_chat::shown(self) {
             agent_chat::settings::dialog(self, ui.ctx());
         }
+        // The Designs panel is on the start page too: it is how designs and importable files
+        // are found in the first place.
+        let mut designs_shown = false;
         if self.home.open {
+            designs_panel::show(self, ui);
+            designs_shown = true;
             home::show(self, ui);
             if self.home.open {
                 // Agent detection runs in the background and is only received by `agent_chat::poll`
@@ -1725,7 +1737,9 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
-        designs_panel::show(self, ui);
+        if !designs_shown {
+            designs_panel::show(self, ui);
+        }
         if self.ui.show_browser {
             browser::browser(self, ui);
         }

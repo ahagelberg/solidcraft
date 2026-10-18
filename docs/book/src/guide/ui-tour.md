@@ -18,11 +18,16 @@
   it. Its top row picks a repository (a folder you keep designs in, with a name and a
   description; Preferences › **Repositories** adds and edits them, and a new install starts with
   one at `Documents/SolidCraft`). **Use the Repositories panel** there turns the whole thing off:
-  no button, no panel, and Save As no longer starts in the repository. Below the repository are
+  no button, no panel, and Save As no longer starts in the repository. It is on the start page
+  too, so a design or an importable file is one double-click away from there. Below the repository are
   the folders, each design with its
   thumbnail and the date it was last saved; a folder that is missing is made when the panel first
   shows it, and one that cannot be made says so, with the reason and a **Try Again** button. A
   folder opens on a double click and the breadcrumb above walks back out. **New Folder** makes one.
+  Files SolidCraft can import (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ and glTF) are listed
+  beside the designs with the import icon: double-click one to open it as a new design, drag it
+  into an open design to place it, or right-click it for the same menu (Insert, Rename, Move…,
+  Delete, Show in Folder) the designs have.
   Drag the panel's right edge to widen or narrow it; it reopens at that width. Click a row and
   press **F2** to rename that design or folder, with the whole name selected as a file browser
   does (elsewhere F2 renames what is selected in the design). Right-click a
