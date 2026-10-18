@@ -56,6 +56,30 @@ fn a_repository_folder_that_cannot_be_made_is_reported_not_spun_on() {
 }
 
 #[test]
+fn the_switch_turns_the_button_the_panel_and_the_save_folder_off_and_on() {
+    // Off (the preference): no button, no panel, and Save As starts where the picker was.
+    let mut h = Harness::new();
+    h.app.services.designs_panel = true;
+    h.app.preferences.repositories =
+        vec![Repository { id: "test".into(), name: "Test".into(), description: String::new(), path: h.dir.to_string_lossy().into_owned() }];
+    h.app.preferences.active_repository = "test".into();
+    h.app.preferences.repositories_panel = false;
+    h.frames(4);
+    assert!(solidcraft_ui_egui::scenario::handle_at("appbar:designs").is_none(), "the button is there with the switch off");
+    // Nothing of the panel is drawn at all (no rows, no counts).
+    h.run(&json!([{ "expect": { "count": { "name": "designs:folders", "value": null } } }])).unwrap();
+    h.run(&json!([{ "click": { "handle": "appbar:folder" } }, { "widget": "Save As…" }])).unwrap();
+    assert_eq!(h.last_save_folder(), None, "Save As started in a folder with the switch off");
+
+    // On: the button, the panel with the repository's rows, and Save As in the repository folder.
+    let mut h = panel();
+    assert!(solidcraft_ui_egui::scenario::handle_at("appbar:designs").is_some(), "no button with the switch on");
+    h.run(&json!([{ "expect": { "count": { "name": "designs:folders", "value": 0 } } }])).unwrap();
+    h.run(&json!([{ "click": { "handle": "appbar:folder" } }, { "widget": "Save As…" }])).unwrap();
+    assert_eq!(h.last_save_folder(), Some(h.dir.to_string_lossy().into_owned()));
+}
+
+#[test]
 fn the_panel_lists_a_repository_and_makes_a_folder() {
     let mut h = panel();
     // The panel makes the repository folder when it opens, and lists it empty.

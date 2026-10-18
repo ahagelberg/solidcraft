@@ -21,11 +21,18 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     let add_label = app.tr("designs.add_repository").to_string();
     let empty_label = app.tr("designs.no_repositories").to_string();
     let duplicate_label = app.tr("designs.duplicate_name").to_string();
+    let use_label = app.tr("designs.use_panel").to_string();
+    let use_note = app.tr("designs.use_panel_note").to_string();
 
     ui.label(RichText::new(repositories_label).size(15.0).strong().color(t.text));
     ui.add_space(2.0);
     ui.label(RichText::new(note).size(11.0).color(t.text_dim));
     ui.add_space(8.0);
+    // The switch for the whole feature: without it the panel, its button and the Save As folder
+    // are off, and designs save wherever the picker was.
+    ui.checkbox(&mut app.preferences.repositories_panel, use_label.as_str());
+    ui.label(RichText::new(use_note).size(11.0).color(t.text_dim));
+    ui.add_space(10.0);
 
     // Take the list out while it is edited: the page needs `app` for labels, the picker and the
     // translations, so it must not hold a mutable borrow of it.

@@ -971,6 +971,8 @@
   "designs.title": "Designs",
   "designs.truncated": "Einige Einträge werden nicht angezeigt",
   "designs.unavailable": "Dieser Ordner ist nicht verfügbar",
+  "designs.use_panel": "Repository-Bereich verwenden",
+  "designs.use_panel_note": "Schaltfläche und Bereich der Designs-Leiste, und „Speichern unter“ beginnt im Repository-Ordner. Aus: gespeichert wird am zuletzt gewählten Ort.",
   "dialog.computing": "Wird berechnet… {seconds} s",
   "dialog.could_not_be_checked": "nicht prüfbar",
   "dialog.custom_axis": "↖ Eigene Achse",

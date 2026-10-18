@@ -327,7 +327,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         app_bar_separator(ui, r, x, "brand");
         x += 16.0;
         // The Designs panel, left of the File menu (the 3x3 grid).
-        if app.services.designs_panel {
+        if app.services.designs_panel && app.preferences.repositories_panel {
             if crate::designs_panel::app_bar_button(app, ui, r, x, idle) {
                 app.ui.show_designs = !app.ui.show_designs;
             }
@@ -2142,7 +2142,7 @@ mod header_report_tests {
         h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
         let dir = h.dir.clone();
         h.app.services.pick_save =
-            Some(Box::new(move |name, _extensions| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+            Some(Box::new(move |name, _extensions, _folder| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();

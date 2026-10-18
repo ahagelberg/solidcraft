@@ -861,6 +861,8 @@
   "designs.title": "디자인",
   "designs.truncated": "일부 항목이 표시되지 않습니다",
   "designs.unavailable": "이 폴더를 사용할 수 없습니다",
+  "designs.use_panel": "리포지토리 패널 사용",
+  "designs.use_panel_note": "버튼과 패널이 표시되고 다른 이름으로 저장이 리포지토리 폴더에서 시작됩니다. 끄면 마지막 위치에 저장합니다.",
   "dialog.computing": "계산 중… {seconds}초",
   "dialog.could_not_be_checked": "확인할 수 없음",
   "dialog.custom_axis": "↖ 사용자 정의 축",

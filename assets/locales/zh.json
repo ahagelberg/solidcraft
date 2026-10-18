@@ -1020,6 +1020,8 @@
   "designs.title": "设计",
   "designs.truncated": "部分条目未显示",
   "designs.unavailable": "此文件夹不可用",
+  "designs.use_panel": "使用存储库面板",
+  "designs.use_panel_note": "显示按钮和面板，另存为从存储库文件夹开始。关闭时保存在上次的位置。",
   "dialog.computing": "正在计算… {seconds} 秒",
   "dialog.could_not_be_checked": "无法检查",
   "dialog.custom_axis": "↖ 自定义轴",

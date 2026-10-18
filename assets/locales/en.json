@@ -1020,6 +1020,8 @@
   "designs.title": "Designs",
   "designs.truncated": "Some entries are not shown",
   "designs.unavailable": "This folder is not available",
+  "designs.use_panel": "Use the Repositories panel",
+  "designs.use_panel_note": "Its button and panel, and Save As starts in the repository folder. Off, designs save where the picker last was.",
   "dialog.computing": "Computing… {seconds} s",
   "dialog.could_not_be_checked": "could not be checked",
   "dialog.custom_axis": "↖ Custom Axis",
