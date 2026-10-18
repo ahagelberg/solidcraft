@@ -150,6 +150,8 @@ fn replies_match_the_output_schema() {
         features: 0,
         errors: 0,
         name: "a".into(),
+        version: 1,
+        versions: 1,
         read_only: None,
         open_elsewhere: Some(OpenElsewhere { host: "h".into(), user: "u".into(), app: "1".into(), opened: 7 }),
         newer_file: None,
@@ -164,6 +166,8 @@ fn replies_match_the_output_schema() {
         features: 0,
         errors: 0,
         name: "a".into(),
+        version: 1,
+        versions: 1,
         read_only: None,
         open_elsewhere: None,
         newer_file: Some(NewerFileReport {

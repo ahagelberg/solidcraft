@@ -25,6 +25,27 @@ uncompressed payload. Identical content with the same encoding is written once.
 Required parts, malformed references, ambiguous embedded payloads, incorrect hashes,
 invalid mesh data and unsupported versions produce errors before session adoption.
 
+## Version history
+
+A save does not throw away the design it replaces: every version of the document stays in the
+one file. `versions.json` (`{"format":"solidcraft-versions/1","current":N}`) says how many
+there are; `document.json` is always the current one, and the ones before it are kept as
+`.history/<n>/document.json` for `n` in `1..current`, each with the blobs it references. Merging
+into one file keeps a design a single thing to copy, rename, move or delete, and a version that
+is opened, or made the latest, never depends on a file somewhere else.
+
+- Opening a version reads its `document.json` (or `.history/<n>/document.json`); the reader
+  reports which version a file holds, and a design opened from an older one says so.
+- Saving a design opened from an older version deletes the versions after it. The command
+  refuses instead of doing that unasked (`discard_later_versions: true` is the caller's
+  acknowledgement), and the application asks in a dialog first.
+- `designs.version_promote {path, version}` makes a version the latest and drops the ones after
+  it. `designs.version_purge {path, version}` drops the ones before it and renumbers the rest so
+  the file still starts at version 1. Both rewrite the container in place (atomically, with the
+  usual backup) and report the resulting `version` and `versions`.
+- A file without `versions.json` holds one version, so containers written before this change keep
+  opening unchanged.
+
 ## Mesh encoding
 
 Mesh blobs begin with the eight ASCII bytes `SCMESH01`, followed by little-endian

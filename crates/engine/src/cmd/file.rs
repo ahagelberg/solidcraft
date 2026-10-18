@@ -56,7 +56,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&OPEN_CONTRACT)
         .output(output_schema_for::<OpenResult>)
-        .params("path: .sc design (or a .solidcraft design from an earlier release), .dxf/.svg drawing (opens as a new, unsaved design with an XY sketch, using sketch.insert_dxf/sketch.insert_svg units and defaults), or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make), or a .ply/.xyz/.pts point cloud (opens as a new design holding it, as pointcloud.insert makes; its `units` and `max_points` as there); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); units?: for an STL or OBJ file (see file.insert_mesh); origin?: bool for a mesh file (see file.insert_mesh); folder?: bool for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); reuse_import?: bool (STEP/IGES: reuse an unchanged import from the local saved-model cache, default true; false recomputes without reading or writing the cache; → import_reused: bool, content_sha256: exact source digest); history?: features|solids for a FreeCAD file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"overlay\" (default: flat copper just above the board), \"none\" (leave the traces out) or \"mesh\" (modelled with thickness; true also means mesh; pads are included whenever copper is enabled); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (the board itself; default brep: a solid whose faces can be picked); read_only?: bool (a design: saving to its own file is refused, file.save_as keeps the changes elsewhere); verify?: bool (default false: a design's signature is checked and reported, `signature`) → open_elsewhere: {host, user, app, opened} when another SolidCraft has the design open (its lock file is fresh); newer_file: {format, reads_up_to, unknown_changes, not_understood, notice} and warnings when a newer SolidCraft saved it: it opens all the same, and what this version can't read is named there and kept by saving"),
+        .params("path: .sc design (or a .solidcraft design from an earlier release), .dxf/.svg drawing (opens as a new, unsaved design with an XY sketch, using sketch.insert_dxf/sketch.insert_svg units and defaults), or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make), or a .ply/.xyz/.pts point cloud (opens as a new design holding it, as pointcloud.insert makes; its `units` and `max_points` as there); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); units?: for an STL or OBJ file (see file.insert_mesh); origin?: bool for a mesh file (see file.insert_mesh); folder?: bool for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); reuse_import?: bool (STEP/IGES: reuse an unchanged import from the local saved-model cache, default true; false recomputes without reading or writing the cache; → import_reused: bool, content_sha256: exact source digest); history?: features|solids for a FreeCAD file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"overlay\" (default: flat copper just above the board), \"none\" (leave the traces out) or \"mesh\" (modelled with thickness; true also means mesh; pads are included whenever copper is enabled); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (the board itself; default brep: a solid whose faces can be picked); read_only?: bool (a design: saving to its own file is refused, file.save_as keeps the changes elsewhere); verify?: bool (default false: a design's signature is checked and reported, `signature`) → open_elsewhere: {host, user, app, opened} when another SolidCraft has the design open (its lock file is fresh); newer_file: {format, reads_up_to, unknown_changes, not_understood, notice} and warnings when a newer SolidCraft saved it: it opens all the same, and what this version can't read is named there and kept by saving"),
     CommandSpec::new("file.insert_step", "Insert STEP", crate::checked!("file.insert_step", insert_step))
         .at("SOLID", "INSERT")
         .icon("import")
@@ -75,7 +75,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&SAVE_CONTRACT)
         .output(output_schema_for::<SaveResult>)
-        .params("path? (default: current file; a name that opens as another kind of file, such as .step, .stl or .dxf, is refused: file.export writes those); format?: container|json (default: json for .json, otherwise container); compression?: fast|compact (default: fast); cache?: bool (the evaluated model, so the design opens without rebuilding; default: true); preview?: bool (saved display meshes, default: false); overwrite?: bool (replace the design's file even though another program or computer changed it since it was opened or saved; without it that save is refused); sign?: bool (the app's own Save only: sign the save with GnuPG, appending a provenance record; container only; a script or agent is refused); signing_key?: fingerprint or user id (default: GnuPG's default signing key) → signature: {method, fingerprint, user_id?} when signed"),
+        .params("path? (default: current file; a name that opens as another kind of file, such as .step, .stl or .dxf, is refused: file.export writes those); format?: container|json (default: json for .json, otherwise container); compression?: fast|compact (default: fast); cache?: bool (the evaluated model, so the design opens without rebuilding; default: true); preview?: bool (saved display meshes, default: false); overwrite?: bool (replace the design's file even though another program or computer changed it since it was opened or saved; without it that save is refused); sign?: bool (the app's own Save only: sign the save with GnuPG, appending a provenance record; container only; a script or agent is refused); signing_key?: fingerprint or user id (default: GnuPG's default signing key); discard_later_versions?: bool (a design opened from an older version would lose the versions after it: without this the save is refused) → signature: {method, fingerprint, user_id?} when signed"),
     CommandSpec::new("file.save_as", "Save As", crate::checked!("file.save_as", save_as))
         .icon("save")
         .key("Ctrl+Shift+S")
@@ -1170,6 +1170,22 @@ fn read_kicad_env_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, del
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
+    let version = match p.get("version") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            u32::try_from(v.as_u64().ok_or_else(|| bad("doc.open", "`version` must be a whole number"))?)
+                .map_err(|_| bad("doc.open", "`version` is too large"))?,
+        ),
+    };
+    if version.is_some()
+        && (solidcraft_io::is_step_path(path)
+            || solidcraft_io::is_mesh_path(path)
+            || solidcraft_io::is_kicad_path(path)
+            || solidcraft_io::is_point_cloud_path(path)
+            || super::drawing_import_command(path).is_some())
+    {
+        return Err(bad("doc.open", "`version` applies to designs only"));
+    }
     if !solidcraft_io::is_step_path(path) && p.get("names").is_some_and(|v| !v.is_null()) {
         return Err(bad("doc.open", "`names` applies to STEP and IGES files only"));
     }
@@ -1280,12 +1296,23 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let verify = bool_(p, "verify").unwrap_or(false);
     // Stamped before it is read: a write while it is being read is a change too.
     let disk = solidcraft_io::design_lock::stamp(path);
-    let (doc, saved) = read_design(s, path)?;
+    let (doc, saved) = match version {
+        Some(version) => {
+            let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            let mut doc = solidcraft_io::read_design_version(&bytes, version).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            if let Some(stem) = default_name_for(&doc.name, path) {
+                doc.name = stem;
+            }
+            (doc, None)
+        }
+        None => read_design(s, path)?,
+    };
+    let versions = solidcraft_io::container_versions_file(std::path::Path::new(path)).map(|v| v.current).unwrap_or(1);
     // A file with provenance is evaluated from its timeline, never from a cache the signature
     // does not cover.
     let saved = if solidcraft_io::has_design_provenance(path) { None } else { saved };
     let opened = Session::opened_at_validating(doc, saved.as_ref(), Some(path), s.validation());
-    opened_design(s, opened, path, read_only, disk, verify, None)
+    opened_design(s, opened, path, read_only, disk, verify, None, version, versions)
 }
 
 /// Read the design file at `path` for `doc.open`, under its file's name if it has none of its own.
@@ -1307,10 +1334,15 @@ fn opened_design(
     disk: Option<solidcraft_io::design_lock::FileStamp>,
     verify: bool,
     checked: Option<Option<solidcraft_io::ProvenanceReport>>,
+    version: Option<u32>,
+    versions: u32,
 ) -> Result<Value> {
     s.replace_design(opened);
     s.disk = disk;
     s.read_only = read_only;
+    // An older version is what the design in front is: saving it replaces the ones after it.
+    s.version = version.filter(|v| *v < versions);
+    s.versions = versions;
     s.provenance_chain = solidcraft_io::read_design_provenance_chain_file(path);
     // A staged open checks on its worker before it lands; the report is then just taken here.
     s.provenance = match checked {
@@ -1337,6 +1369,8 @@ fn opened_design(
         features: s.doc.features.len(),
         errors,
         name: s.doc.name.clone(),
+        version: s.version.unwrap_or(versions),
+        versions,
         read_only: read_only.then_some(true),
         open_elsewhere,
         newer_file: s.doc.newer_file.as_ref().map(|file| NewerFileReport {
@@ -1530,6 +1564,7 @@ fn write(
     overwrite: bool,
     sign: bool,
     signing_key: Option<&str>,
+    discard_later: bool,
 ) -> Result<Value> {
     // A path outside the agent's folders says so first, whatever its name.
     solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
@@ -1560,7 +1595,7 @@ fn write(
     if let Some((from, to)) = &renamed {
         rename_design(s, from, to);
     }
-    let r = write_file(s, path, format, compression, preview, cache, sign, signing_key);
+    let r = write_file(s, path, format, compression, preview, cache, sign, signing_key, discard_later);
     if r.is_err()
         && let Some((from, to)) = &renamed
     {
@@ -1578,13 +1613,14 @@ fn write_file(
     cache: bool,
     sign: bool,
     signing_key: Option<&str>,
+    discard_later: bool,
 ) -> Result<Value> {
     let compression = match compression {
         "fast" => solidcraft_io::DesignCompression::Fast,
         "compact" => solidcraft_io::DesignCompression::Compact,
         _ => return Err(bad("file.save", "compression must be fast or compact")),
     };
-    write_bytes(s, path, format, compression, preview, cache, sign, signing_key)
+    write_bytes(s, path, format, compression, preview, cache, sign, signing_key, discard_later)
 }
 
 fn write_bytes(
@@ -1596,10 +1632,33 @@ fn write_bytes(
     cache: bool,
     sign: bool,
     signing_key: Option<&str>,
+    discard_later: bool,
 ) -> Result<Value> {
     let chain = s.provenance_chain.clone().unwrap_or_default();
     let mut signature = None;
-    let bytes = if sign {
+    // Saving the design over its own file makes the new version and keeps the old ones; a save
+    // under another name starts a new file. Only a container has versions.
+    let previous = if s.path.as_deref() == Some(path) {
+        solidcraft_io::vfs::read(path, solidcraft_io::MAX_DESIGN_BYTES).ok().filter(|bytes| solidcraft_io::is_design_container(bytes))
+    } else {
+        None
+    };
+    let base = if s.path.as_deref() == Some(path) { s.version } else { None };
+    if let (Some(previous), Some(base)) = (previous.as_deref(), base)
+        && base < solidcraft_io::container_versions(previous).current
+        && !discard_later
+    {
+        return Err(bad(
+            "file.save",
+            format!(
+                "saving this design would delete versions {}…{} of it: pass `discard_later_versions: true`",
+                base.saturating_add(1),
+                solidcraft_io::container_versions(previous).current
+            ),
+        ));
+    }
+    let save = solidcraft_io::ProvenanceSave { source: None, chain: &chain, author: None, tool: Some("SolidCraft"), note: None, created: None };
+    let (bytes, version) = if sign {
         if !s.signing_allowed {
             return Err(bad(
                 "file.save",
@@ -1609,26 +1668,40 @@ fn write_bytes(
         if format != "container" {
             return Err(bad("file.save", "only a container can carry a signature: save as .sc (format container), not json"));
         }
-        let (bytes, signed) = write_signed_container(s, &chain, path, compression, preview, cache, signing_key)?;
+        let (bytes, signed, version) = write_signed_container(s, &chain, path, compression, preview, cache, signing_key, previous.as_deref(), base)?;
         signature = signed;
-        bytes
+        (bytes, version)
     } else if !chain.records.is_empty() {
         // A save without a key keeps the history it opened with, so the newest record is reported
         // as covering an earlier version instead of the chain being destroyed.
         if format != "container" {
             match format {
-                "json" => solidcraft_io::write_design(&s.design_at(Some(path))),
+                "json" => (solidcraft_io::write_design(&s.design_at(Some(path))), None),
                 _ => return Err(bad("file.save", "format must be container or json")),
             }
         } else {
-            let save =
-                solidcraft_io::ProvenanceSave { source: None, chain: &chain, author: None, tool: Some("SolidCraft"), note: None, created: None };
-            s.design_container_signed(Some(path), compression, preview, cache, &save).map_err(|e| EngineError::Other(format!("{path}: {e}")))?
+            match previous.as_deref() {
+                Some(previous) => {
+                    let (bytes, version) = s
+                        .design_container_signed_versioned(Some(path), compression, preview, cache, previous, base, &save)
+                        .map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+                    (bytes, Some(version))
+                }
+                None => (s.design_container_signed(Some(path), compression, preview, cache, &save).map_err(|e| EngineError::Other(format!("{path}: {e}")))?, Some(1)),
+            }
         }
     } else {
         match format {
-            "container" => s.design_container_at(Some(path), compression, preview, cache)?,
-            "json" => solidcraft_io::write_design(&s.design_at(Some(path))),
+            "container" => match previous.as_deref() {
+                Some(previous) => {
+                    let (bytes, version) = s
+                        .design_container_versioned(Some(path), compression, preview, cache, previous, base)
+                        .map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+                    (bytes, Some(version))
+                }
+                None => (s.design_container_at(Some(path), compression, preview, cache)?, Some(1)),
+            },
+            "json" => (solidcraft_io::write_design(&s.design_at(Some(path))), None),
             _ => return Err(bad("file.save", "format must be container or json")),
         }
     };
@@ -1642,6 +1715,8 @@ fn write_bytes(
     s.path = Some(path.to_string());
     s.disk = solidcraft_io::design_lock::stamp(path);
     s.read_only = false;
+    s.version = None;
+    s.versions = version.unwrap_or(0);
     s.provenance_chain = solidcraft_io::read_design_provenance_chain(&bytes);
     s.provenance = None;
     s.mark_saved();
@@ -1681,7 +1756,9 @@ fn write_signed_container(
     preview: bool,
     cache: bool,
     signing_key: Option<&str>,
-) -> Result<(Vec<u8>, Option<SignedSave>)> {
+    previous: Option<&[u8]>,
+    base: Option<u32>,
+) -> Result<(Vec<u8>, Option<SignedSave>, Option<u32>)> {
     let gpg = crate::gpg::Gpg::find().ok_or_else(|| bad("file.save", "signing needs GnuPG, which was not found on this computer"))?;
     let signer = crate::gpg::Signer::new(&gpg, signing_key.map(str::trim).filter(|key| !key.is_empty()));
     let save = solidcraft_io::ProvenanceSave {
@@ -1692,9 +1769,13 @@ fn write_signed_container(
         note: None,
         created: Some(solidcraft_io::design_lock::now_secs()),
     };
-    let bytes = s.design_container_signed(Some(path), compression, preview, cache, &save).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let (bytes, version) = match previous {
+        Some(previous) => s.design_container_signed_versioned(Some(path), compression, preview, cache, previous, base, &save),
+        None => s.design_container_signed(Some(path), compression, preview, cache, &save).map(|bytes| (bytes, 1)),
+    }
+    .map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let info = signer.signing_info().ok_or_else(|| EngineError::Other(format!("{path}: GnuPG signed the design but named no key")))?;
-    Ok((bytes, Some(SignedSave { method: "gpg".to_owned(), fingerprint: info.fingerprint, user_id: info.user_id })))
+    Ok((bytes, Some(SignedSave { method: "gpg".to_owned(), fingerprint: info.fingerprint, user_id: info.user_id }), Some(version)))
 }
 
 /// The browser cannot run GnuPG.
@@ -1707,7 +1788,9 @@ fn write_signed_container(
     _preview: bool,
     _cache: bool,
     _signing_key: Option<&str>,
-) -> Result<(Vec<u8>, Option<SignedSave>)> {
+    _previous: Option<&[u8]>,
+    _base: Option<u32>,
+) -> Result<(Vec<u8>, Option<SignedSave>, Option<u32>)> {
     Err(bad("file.save", "signing needs the desktop app and GnuPG; the browser cannot sign"))
 }
 
@@ -1963,7 +2046,21 @@ impl Session {
         preview: bool,
         cache: bool,
     ) -> solidcraft_io::Result<Vec<u8>> {
-        self.container_bytes(path, compression, preview, cache, None)
+        self.container_bytes(path, compression, preview, cache, None, None).map(|(bytes, _)| bytes)
+    }
+
+    /// The container bytes of a save over `previous` (the file being replaced), keeping its
+    /// versions, and the version written.
+    pub fn design_container_versioned(
+        &self,
+        path: Option<&str>,
+        compression: solidcraft_io::DesignCompression,
+        preview: bool,
+        cache: bool,
+        previous: &[u8],
+        base: Option<u32>,
+    ) -> solidcraft_io::Result<(Vec<u8>, u32)> {
+        self.container_bytes(path, compression, preview, cache, None, Some((previous, base)))
     }
 
     /// The container bytes with one signed provenance record appended to `save.chain`.
@@ -1975,7 +2072,22 @@ impl Session {
         cache: bool,
         save: &solidcraft_io::ProvenanceSave<'_>,
     ) -> solidcraft_io::Result<Vec<u8>> {
-        self.container_bytes(path, compression, preview, cache, Some(save))
+        self.container_bytes(path, compression, preview, cache, Some(save), None).map(|(bytes, _)| bytes)
+    }
+
+    /// [`Self::design_container_signed`] as the next version of `previous`, and the version
+    /// written.
+    pub fn design_container_signed_versioned(
+        &self,
+        path: Option<&str>,
+        compression: solidcraft_io::DesignCompression,
+        preview: bool,
+        cache: bool,
+        previous: &[u8],
+        base: Option<u32>,
+        save: &solidcraft_io::ProvenanceSave<'_>,
+    ) -> solidcraft_io::Result<(Vec<u8>, u32)> {
+        self.container_bytes(path, compression, preview, cache, Some(save), Some((previous, base)))
     }
 
     fn container_bytes(
@@ -1985,22 +2097,36 @@ impl Session {
         preview: bool,
         cache: bool,
         provenance: Option<&solidcraft_io::ProvenanceSave<'_>>,
-    ) -> solidcraft_io::Result<Vec<u8>> {
+        history: Option<(&[u8], Option<u32>)>,
+    ) -> solidcraft_io::Result<(Vec<u8>, u32)> {
         let design = self.design_at(path);
         let geometry = cache.then(|| saved_geometry(self, &design)).flatten();
         let preview = preview.then(|| saved_preview(self)).flatten();
         let thumbnail = cache.then(|| thumbnail::saved(self)).flatten();
-        match provenance {
-            Some(save) => solidcraft_io::write_design_container_with_provenance(
+        match history {
+            Some((previous, base)) => solidcraft_io::write_design_container_versioned(
                 &design,
                 compression,
                 preview.as_ref(),
                 geometry.as_ref(),
                 thumbnail.as_deref(),
-                save,
+                Some(previous),
+                base,
+                provenance,
             ),
             None => {
-                solidcraft_io::write_design_container_with_thumbnail(&design, compression, preview.as_ref(), geometry.as_ref(), thumbnail.as_deref())
+                let bytes = match provenance {
+                    Some(save) => solidcraft_io::write_design_container_with_provenance(
+                        &design,
+                        compression,
+                        preview.as_ref(),
+                        geometry.as_ref(),
+                        thumbnail.as_deref(),
+                        save,
+                    ),
+                    None => solidcraft_io::write_design_container_with_thumbnail(&design, compression, preview.as_ref(), geometry.as_ref(), thumbnail.as_deref()),
+                }?;
+                Ok((bytes, 1))
             }
         }
     }
@@ -2062,6 +2188,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         bool_(p, "overwrite").unwrap_or(false),
         bool_(p, "sign").unwrap_or(false),
         str_(p, "signing_key"),
+        bool_(p, "discard_later_versions").unwrap_or(false),
     )
 }
 
@@ -2082,6 +2209,7 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
         bool_(p, "overwrite").unwrap_or(false),
         bool_(p, "sign").unwrap_or(false),
         str_(p, "signing_key"),
+        bool_(p, "discard_later_versions").unwrap_or(false),
     )
 }
 

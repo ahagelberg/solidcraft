@@ -527,6 +527,11 @@ pub struct Session {
     /// design's name. A borrowed name follows Save As to the new file's name (#4907); a name
     /// the user chose is kept.
     pub user_named: bool,
+    /// The version of the file this design was opened from (`None`: its current version, or a
+    /// design never saved). Saving it replaces the versions after this one.
+    pub version: Option<u32>,
+    /// How many versions the file has (the current one's number), as last read or written.
+    pub versions: u32,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
     /// Interactive loaders may show it provisionally; it never becomes model state.
     pub open_preview: Option<Box<dyn Fn(solidcraft_io::DesignPreview) + Send + Sync>>,
@@ -875,6 +880,8 @@ impl Session {
             provenance: None,
             signing_allowed: false,
             user_named: false,
+            version: None,
+            versions: 0,
             open_preview: None,
             log: Vec::new(),
             revision: 1,
@@ -2060,6 +2067,8 @@ impl Session {
             provenance: self.provenance.clone(),
             signing_allowed: false,
             user_named: self.user_named,
+            version: self.version,
+            versions: self.versions,
             open_preview: None,
             saved: self.saved.clone(),
             log: Vec::new(),

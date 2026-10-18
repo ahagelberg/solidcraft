@@ -137,7 +137,8 @@ impl OpenSteps {
             self.model.evaluate_shared(&self.doc);
         }
         let opened = Session::with_model(self.doc, self.visibility, self.model).located(Some(&self.path));
-        opened_design(s, opened, &self.path, self.read_only, self.disk, self.verify, self.checked)
+        let versions = solidcraft_io::container_versions_file(std::path::Path::new(&self.path)).map(|v| v.current).unwrap_or(1);
+        opened_design(s, opened, &self.path, self.read_only, self.disk, self.verify, self.checked, None, versions)
     }
 }
 

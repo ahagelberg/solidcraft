@@ -157,10 +157,31 @@ impl Writer {
         Ok(())
     }
 
+    /// Copy a part of the container being replaced (a kept version's document, or a blob it
+    /// references) into this one, compressed data and all, under `to`. Nothing is decompressed.
+    pub fn copy_from<R: Read + Seek>(&mut self, source: &mut zip::ZipArchive<R>, from: &str, to: &str) -> Result<(), FormatError> {
+        if self.names.contains(to) {
+            return Ok(());
+        }
+        let size = {
+            let part = source.by_name(from).map_err(|e| invalid(format!("kept part `{from}`: {e}")))?;
+            usize::try_from(part.size()).unwrap_or(usize::MAX)
+        };
+        if size > (self.limits.part_limit)(to) || self.expanded.saturating_add(size) > (self.limits.max_expanded)() {
+            return Err(invalid("kept part too large"));
+        }
+        if self.names.len() >= self.limits.max_entries {
+            return Err(invalid("package too large"));
+        }
+        self.expanded = self.expanded.saturating_add(size);
+        self.names.insert(to.to_owned());
+        self.zip.raw_copy_file_rename(source.by_name(from).map_err(|e| invalid(format!("kept part `{from}`: {e}")))?, to).map_err(invalid)?;
+        Ok(())
+    }
+
     /// Would `entries` more optional parts of `extra` bytes, stored uncompressed, still keep the
     /// file within `budget` and its expanded size within the reader's budget?
-    pub fn room(&self, entries: usize, extra: usize, budget: usize) -> bool {
-        self.names.len().saturating_add(entries) <= self.limits.max_entries && extra <= self.space(entries, budget)
+    pub fn room(&self, entries: usize, extra: usize, budget: usize) -> bool {        self.names.len().saturating_add(entries) <= self.limits.max_entries && extra <= self.space(entries, budget)
     }
 
     /// The bytes `entries` more optional parts may hold together ([`Writer::room`]).

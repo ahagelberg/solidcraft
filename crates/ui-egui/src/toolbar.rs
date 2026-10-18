@@ -620,13 +620,21 @@ pub fn save(app: &mut SolveApp) {
         app.tree.capture_prompt = Some(crate::browser::SAVE.into());
         return;
     }
+    // A design opened from an older version loses the versions after it: ask first.
+    if let Some(prompt) = crate::designs_versions::save_prompt(app) {
+        app.version_prompt = Some(prompt);
+        return;
+    }
+    let discard_later = std::mem::take(&mut app.save_discards_later);
     if app.session.path.is_some() {
-        // Read-only, or changed on disk since it was opened: Save As, or a question, instead.
         if crate::open_elsewhere::check_save(app) {
             let mut params = provenance_params(app);
             // A saved design carries its preview, so the Designs panel shows the part.
             if let Some(object) = params.as_object_mut() {
                 object.insert("cache".into(), json!(true));
+                if discard_later {
+                    object.insert("discard_later_versions".into(), json!(true));
+                }
             }
             crate::save_job::start(app, "file.save", params);
         }

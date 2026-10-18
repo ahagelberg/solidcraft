@@ -545,6 +545,10 @@ pub struct OpenedDesign {
     pub errors: usize,
     /// The design's name.
     pub name: String,
+    /// The version opened (an older one with `doc.open {version}`), else the current one.
+    pub version: u32,
+    /// How many versions the file holds: the current one's number.
+    pub versions: u32,
     /// Only with `read_only`: true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_only: Option<bool>,
