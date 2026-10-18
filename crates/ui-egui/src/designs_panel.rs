@@ -152,8 +152,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             repository_header(app, ui, &t);
             ui.add_space(4.0);
-            breadcrumb(app, ui);
-            ui.add_space(4.0);
+            // The path back out of a subfolder; at the repository root there is nothing to say
+            // (the selector above already names it).
+            if breadcrumb(app, ui) {
+                ui.add_space(4.0);
+            }
             actions(app, ui);
             ui.separator();
             rows(app, ui, &t);
@@ -406,9 +409,11 @@ fn repository_header(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let Some(current) = app.designs.current.clone() else { return };
-    let Some(repository) = active_repository(app) else { return };
+/// The folders between the repository and the one shown, as links: nothing at the root, where the
+/// selector already names the repository. Whether it drew anything.
+fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
+    let Some(current) = app.designs.current.clone() else { return false };
+    let Some(repository) = active_repository(app) else { return false };
     let root = PathBuf::from(&repository.path);
     let root_name = repository.name.clone();
     let relative: Vec<String> = current
@@ -422,6 +427,9 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .collect()
         })
         .unwrap_or_default();
+    if relative.is_empty() {
+        return false;
+    }
     let mut target = None;
     ui.horizontal_wrapped(|ui| {
         let root_link = ui.link(RichText::new(root_name).size(11.5));
@@ -441,6 +449,7 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
     if let Some(target) = target {
         navigate(app, target);
     }
+    true
 }
 
 fn navigate(app: &mut SolveApp, path: PathBuf) {
