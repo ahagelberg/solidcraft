@@ -142,7 +142,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 for part in dialog.folder.strip_prefix(&dialog.root).into_iter().flat_map(|p| p.components()) {
                     let Component::Normal(part) = part else { continue };
                     path.push(part);
-                    ui.label(RichText::new("/").size(12.0).color(t.text_dim));
+                    ui.label(RichText::new(">").size(12.0).color(t.text_dim));
                     let target = path.clone();
                     if ui.link(RichText::new(part.to_string_lossy()).size(12.0)).clicked() {
                         browse = Some(target);
