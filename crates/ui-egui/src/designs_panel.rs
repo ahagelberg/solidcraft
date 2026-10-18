@@ -836,7 +836,10 @@ fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(menu) = app.designs.version_menu.clone() else { return };
     let mut ask = None;
     let t = Tokens::get();
-    let area = egui::Area::new(egui::Id::new("designs-version-menu")).order(egui::Order::Foreground).fixed_pos(menu.at).show(ctx, |ui| {
+    // Keep it on screen: a row near the bottom or the right edge would push it out.
+    let screen = ctx.content_rect();
+    let at = pos2((menu.at.x).min(screen.right() - 200.0).max(screen.left()), (menu.at.y).min(screen.bottom() - 70.0).max(screen.top()));
+    let area = egui::Area::new(egui::Id::new("designs-version-menu")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(190.0);
             ui.label(RichText::new(crate::i18n::format("designs.version", &[("version", &menu.version.to_string())])).size(10.5).color(t.text_dim));
