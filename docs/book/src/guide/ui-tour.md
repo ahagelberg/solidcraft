@@ -14,9 +14,11 @@
   button to insert before it. Buttons can also move between panels, and the layout is saved.
 - **Designs** (left, before the Browser). The grid button left of the File menu shows or hides
   it. Its top row picks a repository (a folder you keep designs in, with a name and a
-  description; Preferences › Designs adds and edits them), and below it the folders of the
-  repository, each design with its thumbnail and the date it was last saved. A folder opens on
-  a double click and the breadcrumb above walks back out. **New Folder** makes one. Right-click a
+  description; Preferences › **Repositories** adds and edits them, and a new install starts with
+  one at `Documents/SolidCraft`). Below it are the folders of the repository, each design with its
+  thumbnail and the date it was last saved; a folder that is missing is made when the panel first
+  shows it, and one that cannot be made says so, with the reason and a **Try Again** button. A
+  folder opens on a double click and the breadcrumb above walks back out. **New Folder** makes one. Right-click a
   design for Open, Insert into Current Design, Rename, Move…, Delete and Show in Folder; drag it
   into an open design to place it as a component. Right-click a folder for Open, Rename, Move…,
   Delete (only when empty) and Properties…, which edits its description and picture: the picture

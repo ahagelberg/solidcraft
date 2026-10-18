@@ -207,9 +207,9 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
 /// The dialog's pages, in order.
-pub const PAGES: [&str; 9] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI", "Designs"];
+pub const PAGES: [&str; 9] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI", "Repositories"];
 pub const PAGE_AI: usize = 7;
-pub const PAGE_DESIGNS: usize = 8;
+pub const PAGE_REPOSITORIES: usize = 8;
 pub const PAGE_SHORTCUTS: usize = 2;
 pub const PAGE_DESIGN: usize = 3;
 pub const PAGE_GRAPHICS: usize = 4;
@@ -267,9 +267,9 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// The repository a new install starts with: the user's Documents folder, named after them.
+    /// The repository a new install starts with: `Documents/SolidCraft`, named after them.
     pub fn suggested() -> Vec<Repository> {
-        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: documents_folder() }]
+        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: suggested_folder() }]
     }
 }
 
@@ -291,9 +291,11 @@ fn user_name() -> String {
         .unwrap_or_else(|| "Designs".into())
 }
 
-/// The system's Documents folder (XDG user dirs, the Windows Known Folder, `~/Documents`), falling
-/// back to the home folder. Never a hard-coded folder name.
-fn documents_folder() -> String {
+/// `Documents/SolidCraft`: the folder the first repository suggests. The system's Documents
+/// folder (XDG user dirs, the Windows Known Folder, `~/Documents`) and our own name inside it,
+/// falling back to the home folder when the platform has none. The folder itself is made when
+/// the panel first opens.
+fn suggested_folder() -> String {
     // Tests and scenarios point this at a scratch folder: they must never create or list the
     // user's real Documents folder.
     if let Some(dir) = std::env::var_os("SOLIDCRAFT_DESIGNS_DIR").filter(|d| !d.is_empty()) {
@@ -301,7 +303,7 @@ fn documents_folder() -> String {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.join("SolidCraft").to_string_lossy().into_owned()).unwrap_or_default()
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -824,7 +826,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             }
         }
         5 => app.session.auto_project = true,
-        PAGE_DESIGNS => {
+        PAGE_REPOSITORIES => {
             p.repositories = Repository::suggested();
             p.active_repository.clear();
         }
@@ -1223,7 +1225,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         crate::agent_chat::settings::page(app, ui);
         return;
     }
-    if app.prefs_window.section == PAGE_DESIGNS {
+    if app.prefs_window.section == PAGE_REPOSITORIES {
         crate::designs_repositories::page(app, ui);
         return;
     }
