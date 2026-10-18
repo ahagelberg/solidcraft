@@ -448,6 +448,8 @@ pub struct Prefs {
     /// the panel shows. Off, SolidCraft saves where the picker last was, as before.
     #[serde(default = "yes")]
     pub repositories_panel: bool,
+    /// How wide the Designs panel is (dragged by its edge).
+    pub designs_width: f32,
 }
 
 /// A switch that is on unless it was turned off.
@@ -549,6 +551,7 @@ impl Default for Prefs {
             repositories: Repository::suggested(),
             active_repository: String::new(),
             repositories_panel: true,
+            designs_width: 280.0,
         }
     }
 }
@@ -840,6 +843,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.repositories = Repository::suggested();
             p.active_repository.clear();
             p.repositories_panel = true;
+            p.designs_width = Prefs::default().designs_width;
         }
         _ => app.ui.pick_bodies = false,
     }
@@ -1808,6 +1812,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if !(0.5..=2.5).contains(&new.ui_scale) || !(0.25..=4.0).contains(&new.look_at_speed) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
+    }
+    if !(crate::designs_panel::WIDTH_MIN..=crate::designs_panel::WIDTH_MAX).contains(&new.designs_width) {
+        return Err(format!("`designs_width` must be {}…{}", crate::designs_panel::WIDTH_MIN, crate::designs_panel::WIDTH_MAX));
     }
     if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
         return Err("`display_quality` must be coarse, normal, fine or ultra".into());

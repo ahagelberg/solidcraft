@@ -20,7 +20,10 @@
   the folders, each design with its
   thumbnail and the date it was last saved; a folder that is missing is made when the panel first
   shows it, and one that cannot be made says so, with the reason and a **Try Again** button. A
-  folder opens on a double click and the breadcrumb above walks back out. **New Folder** makes one. Right-click a
+  folder opens on a double click and the breadcrumb above walks back out. **New Folder** makes one.
+  Drag the panel's right edge to widen or narrow it; it reopens at that width. Click a row and
+  press **F2** to rename that design or folder, with the whole name selected as a file browser
+  does (elsewhere F2 renames what is selected in the design). Right-click a
   design for Open, Insert into Current Design, Rename, Move…, Delete and Show in Folder; drag it
   into an open design to place it as a component. Right-click a folder for Open, Rename, Move…,
   Delete (only when empty) and Properties…, which edits its description and picture: the picture

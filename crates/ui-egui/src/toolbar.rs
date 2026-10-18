@@ -1450,8 +1450,12 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             }
             Key::V => crate::context_menu::toggle_visibility(app),
             Key::F2 => {
-                let at = ctx.input(|i| i.pointer.latest_pos()).unwrap_or(ctx.content_rect().center());
-                crate::context_menu::rename_selection(app, at);
+                // The Designs panel first: with a row picked there, F2 renames that file or
+                // folder (a file browser's F2). Elsewhere it renames the model's selection.
+                if !crate::designs_panel::rename_selected(app, ctx) {
+                    let at = ctx.input(|i| i.pointer.latest_pos()).unwrap_or(ctx.content_rect().center());
+                    crate::context_menu::rename_selection(app, at);
+                }
             }
             Key::F6 => app.animate_view("fit"),
             Key::Delete | Key::Backspace => {
