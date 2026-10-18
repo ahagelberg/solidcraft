@@ -340,9 +340,9 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// The repository a new install starts with: the user's Documents folder, named after them.
+    /// The repository a new install starts with: `Documents/SolidCraft`, named after them.
     pub fn suggested() -> Vec<Repository> {
-        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: documents_folder() }]
+        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: suggested_folder() }]
     }
 }
 
@@ -364,9 +364,11 @@ fn user_name() -> String {
         .unwrap_or_else(|| "Designs".into())
 }
 
-/// The system's Documents folder (XDG user dirs, the Windows Known Folder, `~/Documents`), falling
-/// back to the home folder. Never a hard-coded folder name.
-fn documents_folder() -> String {
+/// `Documents/SolidCraft`: the folder the first repository suggests. The system's Documents
+/// folder (XDG user dirs, the Windows Known Folder, `~/Documents`) and our own name inside it,
+/// falling back to the home folder when the platform has none. The folder itself is made when
+/// the panel first opens.
+fn suggested_folder() -> String {
     // Tests and scenarios point this at a scratch folder: they must never create or list the
     // user's real Documents folder.
     if let Some(dir) = std::env::var_os("SOLIDCRAFT_DESIGNS_DIR").filter(|d| !d.is_empty()) {
@@ -374,7 +376,7 @@ fn documents_folder() -> String {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.join("SolidCraft").to_string_lossy().into_owned()).unwrap_or_default()
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -395,8 +397,8 @@ pub const PAGES: &[&str] = &[
     "3D mouse",
     "Shortcuts",
     "Assistant",
+    "Repositories",
     "Plugins",
-    "Designs",
 ];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_APPEARANCE: usize = 1;
@@ -404,13 +406,9 @@ pub const PAGE_LAYOUT: usize = 2;
 pub const PAGE_GRAPHICS: usize = 3;
 pub const PAGE_DESIGN: usize = 4;
 pub const PAGE_SKETCH: usize = 5;
-pub const PAGE_TOOLS: usize = 6;
-pub const PAGE_NAVIGATION: usize = 7;
-pub const PAGE_MOUSE3D: usize = 8;
-pub const PAGE_SHORTCUTS: usize = 9;
 pub const PAGE_ASSISTANT: usize = 10;
 pub const PAGE_PLUGINS: usize = 11;
-pub const PAGE_DESIGNS: usize = 12;
+pub const PAGE_REPOSITORIES: usize = 12;
 /// What Preferences accepts for `parameter_list_rows`: `parameters.complete` answers at most 200.
 pub const PARAMETER_LIST_ROWS: std::ops::RangeInclusive<u16> = 5..=200;
 const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
@@ -514,6 +512,15 @@ const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
         defaults: page_defaults::<PAGE_ASSISTANT>,
     }),
     prefs_window::Page::Host(prefs_window::HostPage {
+        icon: ui_kit::Icon::Kit("folder"),
+        label: "designs.repositories",
+        group: None,
+        handle: "prefs:page:Repositories",
+        scroll: true,
+        draw: page_draw::<PAGE_REPOSITORIES>,
+        defaults: page_defaults::<PAGE_REPOSITORIES>,
+    }),
+    prefs_window::Page::Host(prefs_window::HostPage {
         icon: ui_kit::Icon::Kit("prefs_plugins"),
         label: "ui.plugins",
         group: None,
@@ -521,15 +528,6 @@ const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
         scroll: true,
         draw: page_draw::<PAGE_PLUGINS>,
         defaults: page_defaults::<PAGE_PLUGINS>,
-    }),
-    prefs_window::Page::Host(prefs_window::HostPage {
-        icon: ui_kit::Icon::Kit("grid"),
-        label: "designs.title",
-        group: None,
-        handle: "prefs:page:Designs",
-        scroll: true,
-        draw: page_draw::<PAGE_DESIGNS>,
-        defaults: page_defaults::<PAGE_DESIGNS>,
     }),
 ];
 
@@ -1579,9 +1577,9 @@ preference_settings! {
     /// The server asks once per agent session (`mcp.options`), so a change applies to the next one.
     mcp_compact: bool = false, PAGE_ASSISTANT;
     /// The folders the Designs panel browses, and the id of the one shown last (empty: the first).
-    repositories: Vec<Repository> = Repository::suggested(), PAGE_DESIGNS;
+    repositories: Vec<Repository> = Repository::suggested(), PAGE_REPOSITORIES;
     /// The id of the repository shown last (empty: the first).
-    active_repository: String = String::new(), PAGE_DESIGNS;
+    active_repository: String = String::new(), PAGE_REPOSITORIES;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
@@ -2218,6 +2216,10 @@ fn defaults(app: &mut SolveApp, page: usize) {
             app.session.project_construction = false;
             app.ui.pick_bodies = false;
         }
+        PAGE_REPOSITORIES => {
+            app.preferences.repositories = Repository::suggested();
+            app.preferences.active_repository.clear();
+        }
         _ => {}
     }
 }
@@ -2850,7 +2852,7 @@ fn draw_page(app: &mut SolveApp, ui: &mut egui::Ui, index: usize, t: &Tokens) {
         }
         PAGE_ASSISTANT => crate::agent_chat::settings::page(app, ui),
         PAGE_PLUGINS => crate::plugins::page(app, ui),
-        PAGE_DESIGNS => crate::designs_repositories::page(app, ui),
+        PAGE_REPOSITORIES => crate::designs_repositories::page(app, ui),
         PAGE_GENERAL => general::show(app, ui),
         PAGE_APPEARANCE => interface::appearance(app, ui, t),
         PAGE_LAYOUT => interface::layout(app, ui),
