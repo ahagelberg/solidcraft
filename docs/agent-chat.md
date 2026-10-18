@@ -81,8 +81,12 @@ sketch, a brief, a part to fit around.
   shows a spinner meanwhile, and **Send** waits), and the message tells the agent it was added; a
   failed import says why and the agent is told nothing of it. Taking a part's chip off the message
   leaves the part in the design (Undo removes it).
-- Every file is named in the message, and listed under it in the conversation. A file that
-  can't be attached says why.
+- Every file is named in the message. In the conversation the attached pictures show under it as
+  thumbnails (hold the pointer over one for a bigger preview, click it to open the viewer, where
+  the file's name is shown and ‹ › step through the message's pictures, together with the picture
+  of the view); the other files are listed by name. Pictures in any of the formats above are
+  decoded in the background, with a spinner until they are in. A file that can't be attached says
+  why.
 
 Files stay with their message: one queued while the agent works keeps its files, and one sent
 again after a sign-in sends them again. When several queued messages go as one prompt, their
@@ -195,7 +199,11 @@ The agent reaches the open design only through SolidCraft's own tools (the
   (with **Copy**), bold, italic, `code` and links (web links only; each link is a button that opens
   it in your browser). What you type, and the agent's thoughts, stay plain text.
 - **Attach view:** tick it to send a picture of the current view with your message, for agents
-  that take pictures.
+  that take pictures. The picture is taken when the agent starts on the message and then shows as
+  a small thumbnail under it. Hold the pointer over the thumbnail for a bigger preview that stays
+  while you do; click it to open the viewer (the message's pictures one at a time, with **‹** and
+  **›** or the arrow keys, closed with Esc or a click outside). A long message scrolls inside its
+  box, so **Send** and the buttons beside it stay in view.
 
 ## Permissions
 

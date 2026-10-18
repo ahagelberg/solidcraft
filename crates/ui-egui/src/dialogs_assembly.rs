@@ -1297,18 +1297,18 @@ pub fn browser_joints(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         return;
     }
     // Drawn like every other browser node (its fold, eye and rows publish `fold:Joints`,
-    // `eye:Joints`, `row:<name>`). The folder's eye hides every joint's glyph, or shows them
-    // all when none is shown.
+    // `eye:Joints`, `row:<name>`). The folder's eye is its own: hiding it hides every joint's
+    // glyph without changing each joint's eye.
     let key = "c0/joints";
     let open = is_open(app, key, true);
-    let any_visible = joints.iter().any(|j| app.session.joint_visible(j.0));
+    let folder_shown = !app.session.folder_hidden(key);
     let r = draw_row(
         ui,
         ui.id().with(key),
-        &Row { depth, fold: Some(open), eye: Some(any_visible), icon: "folder", label: "Joints", ..Default::default() },
+        &Row { depth, fold: Some(open), eye: Some(folder_shown), icon: "folder", label: "Joints", dim: !folder_shown, ..Default::default() },
     );
     if r.eye {
-        let _ = app.run("browser.visibility", json!({ "folder": "joints", "visible": !any_visible }));
+        crate::browser::toggle_folder(app, key);
     } else if r.fold || r.clicked {
         toggle(app, key, true);
     }
@@ -1329,7 +1329,7 @@ pub fn browser_joints(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
                 label: &name,
                 name: true,
                 selected,
-                dim: suppressed || !visible,
+                dim: suppressed || !visible || !folder_shown,
                 ..Default::default()
             },
         );
@@ -1472,7 +1472,7 @@ pub fn drawn_joints(app: &SolveApp) -> Vec<(u64, bool)> {
         .iter()
         .filter_map(|j| {
             let picked = app.tree.picked_joints.contains(&j.id);
-            (picked || app.session.joint_visible(j.id)).then_some((j.id, picked))
+            (picked || app.session.joint_drawn(j.id)).then_some((j.id, picked))
         })
         .collect()
 }

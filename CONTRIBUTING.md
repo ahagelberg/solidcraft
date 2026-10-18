@@ -10,6 +10,9 @@ Help is welcome, whether that's a one-line fix or owning a whole area. This page
 build it, how the code is laid out, the few rules that aren't negotiable, and where help is
 needed most.
 
+Before choosing a task, check the [command inventory](docs/features.md) and
+[roadmap](ROADMAP.md) for implemented capabilities and current priorities.
+
 Questions, ideas or want to say what you're working on? Join the [Discord](https://discord.gg/FtU4NQNVDH).
 
 ## Get it running (about 10 minutes on a fast machine)
@@ -175,21 +178,24 @@ in the PR. `cargo xtask test` builds the tests with it and then runs every test 
 `cargo xtask test -- shell`. Tests run beside each other on a busy machine, so a test must not
 depend on wall-clock timing.
 
-**PRs test what they touch; main and nightly test everything.** On a pull request, CI maps the
-changed files to workspace packages and runs Clippy, the test build and the tests for those and
-the packages that depend on them (`scripts/ci/affected.py`, self-tested in the `checks` job). A
-change to `Cargo.lock`, the root `Cargo.toml`, `.cargo/`, `.config/`, `.github/`, `vendor/`,
-`tests/`, `scripts/` or any file outside a package runs the whole workspace, as does every push
-to `main`, the nightly run and Run workflow.
+**Ready pull requests test what they touch.** CI maps changed files to workspace packages and
+runs Clippy, the test build and tests for those and their dependents. The
+[package selector](scripts/ci/affected.py) and [CI workflow](.github/workflows/ci.yml) define
+which changes require native checks; documentation, packaging and bot-script-only PRs can run
+repository checks only. Workspace-wide changes, merge-queue groups, nightly runs and Run
+workflow select the full workspace. A push to `main` reuses a successful merge-queue run for
+the same commit; otherwise it runs the full suite.
 
-**CI shards the tests.** One job builds them into a cargo-nextest archive and four jobs run a
-quarter each, so every test runs in its own process: don't rely on state left by another test.
-Pull requests skip a few heavy tests (one to four minutes each), which run on every push to
-`main` and nightly; check the `main` run after merging. They are listed in
+**CI shards the tests.** One job builds them into a cargo-nextest archive; two shards run on
+pull requests and four during full validation. Every test runs in its own process: don't rely
+on state left by another test.
+Pull requests skip a few heavy tests (one to four minutes each), which run in full validation
+(the merge queue, nightly, manual runs and pushes to `main` not already tested by the queue).
+Check that validation after merging. They are listed in
 `.config/nextest.toml` and the [testing page](docs/book/src/dev/testing.md):
 
 - `solidcraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness` and
-  the seeds of `tests::robustness_goldens` (`seed_00` … `seed_95`; pull requests that touch `crates/kernel` run every 8th),
+  the seeds of `tests::robustness_goldens` (`seed_00` … `seed_95`; pull requests matching the workflow's geometry paths run all seeds),
   `pattern_suppress_tests::enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen`,
   `pattern_suppress_tests::enclosure_datums_follow_wall_height_and_board_depth_with_material_proofs`,
   `cmd::plastic::tests::enclosure_snap_fit_follows_resized_front_wall`, the `atomic_commands` contract tests
@@ -202,15 +208,16 @@ corpus of designs against a checked-in ratchet ([docs/action-matrix.md](docs/act
 A pull request that makes an action pass should record it with `cargo xtask action-matrix --bless`;
 one that makes a passing action fail fails the sample every CI run checks.
 
-**The reference tests** are 76 parts in [`tests/oracle/`](tests/oracle/), each a `recipe.json`
+**The reference tests** live in [`tests/oracle/`](tests/oracle/), each a `recipe.json`
 in our own format with an `expected.json` beside it. SolidCraft rebuilds the recipe and compares
 body count, volume, area, centre of mass and bounding box (and, where there is a `reference.stl`,
 the surface itself). Expected values are either worked out in closed form
 (`tools/oracle-analytic/`) or computed by building the same recipe in FreeCAD, run as a separate
-program (`tools/freecad-oracle/`); each file says which. [docs/oracle.md](docs/oracle.md) has
-the current results, and CI runs `cargo xtask oracle` on every pull request. A case that fails
-because of a known bug names its issue in `expected.json` (`"known_failure": "#123"`); never
-change an expected value to match SolidCraft's output.
+program (`tools/freecad-oracle/`); each file says which. The generated
+[reference test report](docs/oracle.md) has the current case count and results. The reference-test
+CI job runs `cargo xtask oracle` during full validation; pull-request runs skip it. A case that
+fails because of a known bug names its issue in `expected.json` (`"known_failure": "#123"`);
+never change an expected value to match SolidCraft's output.
 
 ## Changing the design file format
 
@@ -347,12 +354,7 @@ In order of how much they'd help users:
    faces, and fillets that consume neighbouring faces.
 2. **Boolean robustness.** A random-design fuzzer currently gets about half of its designs
    through without a kernel error. Each failing seed is a reproducible bug.
-3. **Y-up / Z-up.** SolidCraft is Z-up only, so most STEP files (from SolidWorks, Onshape, or
-   Fusion's default) open lying on their backs. Fusion solves this with a "default modeling
-   orientation" preference.
-4. **Imported appearances.** Colours from STEP files are lost when a feature changes the
-   imported body. They should become design appearances on import.
-5. **Drawings, CAM and mesh tools.** These are out of scope for now (see
+3. **Drawings, CAM and mesh tools.** These are out of scope for now (see
    [ROADMAP.md](ROADMAP.md)), but anyone who wants to own one is welcome.
 
 ## Licence

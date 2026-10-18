@@ -151,6 +151,8 @@ jobs:
                 .github/workflows/ci.yml) native=true ;;
                 *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|.cargo/*|rust-toolchain*) native=true ;;
                 docs/*|*.md|.github/*|packaging/*|LICENSE*|NOTICE|THIRD-PARTY-LICENSES.txt) ;;
+                # The GitHub bots' scripts: no Rust, tested in this job (Claim and triage bot tests).
+                scripts/claim/*|scripts/triage/*) ;;
                 *) native=true ;;
               esac
             done < "$RUNNER_TEMP/ci-paths"

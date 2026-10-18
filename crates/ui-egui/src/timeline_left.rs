@@ -814,7 +814,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         });
         if has_patterns && patterns_open {
             let depth = group_id.map_or(1, |group| group_depth(&groups, group) + 2);
-            crate::sketch_pattern_tree::rows(app, ui, *id, depth, "timeline", None);
+            crate::sketch_pattern_tree::rows(app, ui, *id, depth, "timeline", None, false);
         }
         previous_visible_group = group_id;
     }

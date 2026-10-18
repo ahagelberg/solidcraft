@@ -18,6 +18,12 @@ fn panel_id(left: bool) -> Id {
     Id::new(if left { "sc_agent_chat_left" } else { "sc_agent_chat_right" })
 }
 
+/// The largest thumbnail of a message's picture, and its largest preview while hovered (points).
+#[cfg(not(target_arch = "wasm32"))]
+const THUMB_MAX: (f32, f32) = (150.0, 56.0);
+#[cfg(not(target_arch = "wasm32"))]
+const PREVIEW_MAX: (f32, f32) = (560.0, 380.0);
+
 /// Forget the panel's own idea of its width, so the preference applies on the next frame.
 pub fn forget_width(ctx: &egui::Context) {
     ctx.data_mut(|d| {
@@ -105,11 +111,113 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| body(app, ui, left));
     crate::scenario::publish_rect("agent_chat:panel", r.response.rect);
     app.agent_chat.panel_rect = Some(r.response.rect);
+    #[cfg(not(target_arch = "wasm32"))]
+    gallery_window(app, &ctx);
     app.agent_chat.drop_rect = Some(r.response.rect);
     show_drop_hint(app, &ctx);
     let w = r.response.rect.width();
     if w.is_finite() && (MIN_WIDTH..=MAX_WIDTH).contains(&w) {
         app.preferences.agent_chat_width = w;
+    }
+}
+
+/// The pictures of a message as small thumbnails in a row. Hovering one shows it bigger for as long
+/// as the pointer stays; a click returns its place in the row, to open the viewer there.
+#[cfg(not(target_arch = "wasm32"))]
+fn picture_strip(ui: &mut egui::Ui, n: usize, pictures: &[Picture]) -> Option<usize> {
+    let t = Tokens::get();
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, picture) in pictures.iter().enumerate() {
+            let texture = match picture.texture(ui.ctx()) {
+                Shown::Ready(texture) => texture,
+                // Being decoded: a spinner the size of a thumbnail's corner, until it is in.
+                Shown::Loading => {
+                    ui.add(egui::Spinner::new().size(THUMB_MAX.1 / 2.0));
+                    continue;
+                }
+                // Not a readable picture: its name, or the plain caption.
+                Shown::Failed => {
+                    let caption = if picture.note.is_empty() { tr("ui.agent_chat_view_attached").to_string() } else { picture.note.clone() };
+                    ui.label(RichText::new(caption).color(t.text_dim).size(11.0));
+                    continue;
+                }
+            };
+            let size = fit(texture.size_vec2(), vec2(THUMB_MAX.0, THUMB_MAX.1));
+            let thumb = ui.add(egui::Image::new((texture.id(), size)).corner_radius(4.0).sense(Sense::click()));
+            crate::scenario::publish_handle(&format!("agent_chat:picture:{n}:{i}"), thumb.rect.center());
+            let hover_max = (ui.ctx().content_rect().size() * 0.5).min(vec2(PREVIEW_MAX.0, PREVIEW_MAX.1));
+            let thumb = thumb.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_ui(|ui| {
+                ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), hover_max))).corner_radius(4.0));
+                if !picture.note.is_empty() {
+                    ui.label(&picture.note);
+                }
+            });
+            if thumb.clicked() {
+                clicked = Some(i);
+            }
+        }
+    });
+    clicked
+}
+
+/// `size` scaled to fit in `max`, keeping its shape (never below one point).
+#[cfg(not(target_arch = "wasm32"))]
+fn fit(size: egui::Vec2, max: egui::Vec2) -> egui::Vec2 {
+    let scale = (max.x / size.x.max(1.0)).min(max.y / size.y.max(1.0)).min(2.0);
+    vec2((size.x * scale).max(1.0), (size.y * scale).max(1.0))
+}
+
+/// The viewer: a message's pictures over the app, one at a time with a counter, Previous and Next
+/// (also the arrow keys), closed with the button, Esc or a click outside.
+#[cfg(not(target_arch = "wasm32"))]
+fn gallery_window(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(mut gallery) = app.agent_chat.gallery.take() else { return };
+    let count = gallery.pictures.len();
+    gallery.at = gallery.at.min(count.saturating_sub(1));
+    let (left, right) =
+        ctx.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft), i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)));
+    let mut step: isize = if left { -1 } else { isize::from(right) };
+    let t = Tokens::get();
+    let max = ctx.content_rect().size() * vec2(0.8, 0.7);
+    let modal = egui::Modal::new(Id::new("sc_agent_chat_gallery")).show(ctx, |ui| {
+        ui.set_max_width(max.x);
+        ui.horizontal(|ui| {
+            let prev = ui.add_enabled(count > 1, egui::Button::new("‹"));
+            crate::scenario::publish_handle("agent_chat:gallery_prev", prev.rect.center());
+            let next = ui.add_enabled(count > 1, egui::Button::new("›"));
+            crate::scenario::publish_handle("agent_chat:gallery_next", next.rect.center());
+            if prev.clicked() {
+                step = -1;
+            }
+            if next.clicked() {
+                step = 1;
+            }
+            ui.label(RichText::new(format!("{} / {}", gallery.at + 1, count)).color(t.text_dim));
+        });
+        if let Some(picture) = gallery.pictures.get(gallery.at) {
+            match picture.texture(ui.ctx()) {
+                Shown::Ready(texture) => {
+                    let resp = ui.add(egui::Image::new((texture.id(), fit(texture.size_vec2(), max))).corner_radius(4.0));
+                    crate::scenario::publish_rect("agent_chat:gallery_picture", resp.rect);
+                }
+                Shown::Loading => {
+                    ui.add(egui::Spinner::new().size(32.0));
+                }
+                Shown::Failed => {
+                    ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim));
+                }
+            }
+            if !picture.note.is_empty() {
+                ui.add(egui::Label::new(&picture.note).wrap());
+            }
+        }
+    });
+    if count > 0 && step != 0 {
+        gallery.at = (gallery.at as isize + step).rem_euclid(count as isize) as usize;
+    }
+    if !modal.should_close() {
+        app.agent_chat.gallery = Some(gallery);
     }
 }
 
@@ -193,6 +301,8 @@ fn window(app: &mut SolveApp, ctx: &egui::Context) {
         let t = Tokens::get();
         let frame = egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 6));
         let r = egui::CentralPanel::default().frame(frame).show(ui, |ui| body(app, ui, false));
+        // The picture viewer opens over this window, where the click was, not over the main one.
+        gallery_window(app, ui.ctx());
         if class == egui::ViewportClass::EmbeddedWindow {
             // Floating inside the app: its handles are the main window's, as the panel's are.
             crate::scenario::publish_rect("agent_chat:window", r.response.rect);
@@ -468,21 +578,12 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
         auth_box(app, ui);
     }
     ui.separator();
-    // The input sits at the bottom (with a row per line of file chips); the conversation takes
-    // the rest.
-    let input_h = 92.0 + chip_rows(app.agent_chat.files(), ui.available_width(), ui.spacing().item_spacing.x) as f32 * 32.0;
-    let avail = (ui.available_height() - input_h).max(80.0);
-    egui::ScrollArea::vertical().id_salt("sc_agent_chat_scroll").max_height(avail).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-        conversation(app, ui);
-    });
-    ui.separator();
+    // The input sits at the bottom of the panel and grows upwards: a long message makes its box
+    // taller up to `edit_max`, then it scrolls, and the conversation takes what is left above. It
+    // is a panel of its own at the bottom, as high as its content this frame, so the buttons under
+    // the box are always in view.
+    let edit_max = (ui.available_height() * 0.4).clamp(48.0, 160.0);
     let busy = state == State::Busy;
-    attachment_chips(app, ui);
-    let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
-        .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
-        .desired_rows(2)
-        .desired_width(f32::INFINITY)
-        .id_salt("sc_agent_chat_input");
     // Enter sends (queues while the agent works); Ctrl/Cmd+Enter sends now; Esc stops. They are
     // read before the field sees them so no newline is typed.
     let focused = ui.memory(|m| m.has_focus(Id::new("sc_agent_chat_input")));
@@ -491,52 +592,77 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         (false, false)
     };
-    let r = ui.add(edit);
-    crate::scenario::publish_rect("agent_chat:input", r.rect);
-    // macOS shows a window's cursors only while it is the active window: over the text box of a
-    // chat window that isn't, the pointer stays an arrow. Coming from the main window, the chat
-    // window becomes active, so the text cursor shows and the first click places the caret.
-    let (chat_active, main_active) = (ui.ctx().input(|i| i.viewport().focused), ui.ctx().input_for(egui::ViewportId::ROOT, |i| i.viewport().focused));
-    if take_focus_for_text(app.preferences.agent_chat_popped, r.hovered(), chat_active, main_active) {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
-    }
-    let enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-    if esc {
+    let (mut send_clicked, mut stop_clicked, mut enter) = (false, false, false);
+    egui::Panel::bottom(Id::new("sc_agent_chat_composer")).resizable(false).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
+        ui.separator();
+        // The files for the next message (#1744), as chips of their own.
+        attachment_chips(app, ui);
+        let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
+            .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .id_salt("sc_agent_chat_input");
+        let r = egui::ScrollArea::vertical()
+            .id_salt("sc_agent_chat_input_scroll")
+            .max_height(edit_max)
+            .auto_shrink([false, true])
+            .show(ui, |ui| ui.add(edit))
+            .inner;
+        crate::scenario::publish_rect("agent_chat:input", r.rect);
+        // macOS shows a window's cursors only while it is the active window: over the text box of a
+        // chat window that isn't, the pointer stays an arrow. Coming from the main window, the chat
+        // window becomes active, so the text cursor shows and the first click places the caret.
+        let (chat_active, main_active) =
+            (ui.ctx().input(|i| i.viewport().focused), ui.ctx().input_for(egui::ViewportId::ROOT, |i| i.viewport().focused));
+        if take_focus_for_text(app.preferences.agent_chat_popped, r.hovered(), chat_active, main_active) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+        ui.horizontal(|ui| {
+            add_menu(app, ui);
+            // A message waits for files still being read.
+            let reading = !app.agent_chat.loading.is_empty();
+            let send_b = ui
+                .add_enabled(!reading, egui::Button::new(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" })))
+                .on_disabled_hover_text(tr("ui.agent_chat_files_loading"));
+            crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
+            send_clicked = send_b.clicked();
+            stop_clicked = busy && glyph_button(ui, "stopturn", tr("ui.agent_chat_stop_turn_tip")).clicked();
+            // A picture of the view goes with the message to agents that take pictures.
+            let images = app.agent_chat.images || !state.running();
+            let attach = ui
+                .add_enabled(images, egui::Checkbox::new(&mut app.agent_chat.attach_view, tr("ui.agent_chat_attach_view")))
+                .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
+                .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
+            crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
+        });
+    });
+    egui::ScrollArea::vertical()
+        .id_salt("sc_agent_chat_scroll")
+        .max_height(ui.available_height())
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            conversation(app, ui);
+        });
+    if esc || stop_clicked {
         cancel(app);
     }
-    ui.horizontal(|ui| {
-        add_menu(app, ui);
-        // A message waits for files still being read.
-        let reading = !app.agent_chat.loading.is_empty();
-        let send_b = ui
-            .add_enabled(!reading, egui::Button::new(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" })))
-            .on_disabled_hover_text(tr("ui.agent_chat_files_loading"));
-        crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
-        // Files alone make a message.
-        let something = !app.agent_chat.input.trim().is_empty() || !app.agent_chat.attachments.is_empty();
-        if reading {
-            // Enter waits with the button.
-        } else if (send_b.clicked() || enter || steer) && something {
-            let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
-            send(app, ui.ctx(), text);
-            if steer {
-                send_now(app, ui.ctx());
-            }
-        } else if steer {
-            // Nothing typed: Ctrl+Enter sends what is already queued.
+    // A message waits for files still being read, and files alone make a message.
+    let reading = !app.agent_chat.loading.is_empty();
+    let something = !app.agent_chat.input.trim().is_empty() || !app.agent_chat.attachments.is_empty();
+    if reading {
+        // Enter waits with the button.
+    } else if (send_clicked || enter || steer) && something {
+        let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
+        send(app, ui.ctx(), text);
+        if steer {
             send_now(app, ui.ctx());
         }
-        if busy && glyph_button(ui, "stopturn", tr("ui.agent_chat_stop_turn_tip")).clicked() {
-            cancel(app);
-        }
-        // A picture of the view goes with the message to agents that take pictures.
-        let images = app.agent_chat.images || !state.running();
-        let attach = ui
-            .add_enabled(images, egui::Checkbox::new(&mut app.agent_chat.attach_view, tr("ui.agent_chat_attach_view")))
-            .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
-            .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
-        crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
-    });
+    } else if steer {
+        // Nothing typed: Ctrl+Enter sends what is already queued.
+        send_now(app, ui.ctx());
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -789,17 +915,23 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Allow (true), Deny (false), Always allow (None).
     let mut approval: Option<(u64, Option<bool>)> = None;
     let mut undo: Option<usize> = None;
+    let mut open_gallery: Option<Gallery> = None;
     let current_doc = app.session.doc.clone();
     for (n, item) in app.agent_chat.items.iter().enumerate() {
         match item {
-            Item::User { text, image, files } => {
+            Item::User { text, image, pictures, files } => {
                 ui.add_space(6.0);
                 egui::Frame::NONE.fill(t.accent_soft).corner_radius(6.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     if !text.is_empty() {
                         ui.add(egui::Label::new(RichText::new(text).color(t.text)).selectable(true).wrap());
                     }
-                    if *image {
+                    if !pictures.is_empty() {
+                        if let Some(at) = picture_strip(ui, n, pictures) {
+                            open_gallery = Some(Gallery { pictures: pictures.clone(), at });
+                        }
+                    } else if *image {
+                        // Taken when the agent starts on the message: nothing to show yet.
                         ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
                     }
                     files_line(ui, files.iter().map(String::as_str));
@@ -1001,6 +1133,9 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     if send_queue_clicked {
         send_now(app, ui.ctx());
     }
+    if open_gallery.is_some() {
+        app.agent_chat.gallery = open_gallery;
+    }
     if let Some((n, o)) = answer {
         answer_permission(app, n, o.as_deref());
     }
@@ -1026,13 +1161,6 @@ fn files_line<'a>(ui: &mut egui::Ui, names: impl Iterator<Item = &'a str>) {
 
 /// The widest a file chip gets; a narrower chat makes them narrower.
 const CHIP_W: f32 = 170.0;
-
-/// How many rows `n` chips take in a chat `avail` wide (`gap` between them).
-fn chip_rows(n: usize, avail: f32, gap: f32) -> usize {
-    let avail = avail.max(1.0);
-    let per_row = (((avail + gap) / (CHIP_W.min(avail) + gap)).floor() as usize).max(1);
-    n.div_ceil(per_row)
-}
 
 /// The files for the next message, as chips in rows that fit the chat: a picture's thumbnail (or
 /// a file mark), the name cut to fit, and a × that takes the file off. Laid out by hand: egui
