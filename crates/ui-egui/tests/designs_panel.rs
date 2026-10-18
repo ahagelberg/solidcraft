@@ -69,14 +69,16 @@ fn the_switch_turns_the_button_the_panel_and_the_save_folder_off_and_on() {
     // Nothing of the panel is drawn at all (no rows, no counts).
     h.run(&json!([{ "expect": { "count": { "name": "designs:folders", "value": null } } }])).unwrap();
     h.run(&json!([{ "click": { "handle": "appbar:folder" } }, { "widget": "Save As…" }])).unwrap();
-    assert_eq!(h.last_save_folder(), None, "Save As started in a folder with the switch off");
+    assert!(h.app.save_to_repo.is_none(), "the repository dialog opened with the switch off");
+    // The switch off means the host's own picker, as before.
+    h.run(&json!([{ "key": "Escape" }])).ok();
 
-    // On: the button, the panel with the repository's rows, and Save As in the repository folder.
+    // On: the button, the panel with the repository's rows, and Save As through the repository.
     let mut h = panel();
     assert!(solidcraft_ui_egui::scenario::handle_at("appbar:designs").is_some(), "no button with the switch on");
     h.run(&json!([{ "expect": { "count": { "name": "designs:folders", "value": 0 } } }])).unwrap();
     h.run(&json!([{ "click": { "handle": "appbar:folder" } }, { "widget": "Save As…" }])).unwrap();
-    assert_eq!(h.last_save_folder(), Some(h.dir.to_string_lossy().into_owned()));
+    assert!(h.app.save_to_repo.is_some(), "Save As did not use the repository with the switch on");
 }
 
 #[test]
@@ -149,6 +151,61 @@ fn the_panel_can_be_dragged_wider_and_remembers_it() {
     other.frames(2);
     let shown = solidcraft_ui_egui::scenario::rect_of("designs:panel").map(|r| r.width()).unwrap_or(0.0);
     assert!((shown - width).abs() < 1.0, "a new app shows the panel {shown} px wide, want {width}");
+}
+
+#[test]
+fn save_as_stays_in_the_repository_and_starts_where_the_panel_shows() {
+    let mut h = panel();
+    // A subfolder, opened in the panel.
+    h.run(&json!([
+        { "widget": "New Folder" },
+        { "text": "Parts" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } },
+        { "click": { "handle": "designs:row:Parts" }, "double": true },
+        { "until": { "count": { "name": "designs:folders", "value": 0 } } }
+    ]))
+    .unwrap();
+
+    // Save As: the repository's dialog, not the host's picker.
+    h.run(&json!([{ "click": { "handle": "appbar:folder" } }, { "widget": "Save As…" }])).unwrap();
+    assert!(h.app.save_to_repo.is_some(), "the system picker was used instead of the repository's dialog");
+
+    // A name with a folder in it cannot leave the folder shown: nothing saves.
+    h.run(&json!([
+        { "click": { "handle": "designs:save:name" } },
+        { "key": "a", "cmd": true },
+        { "text": "../escape" },
+        { "click": { "handle": "designs:save:save" } }
+    ]))
+    .unwrap();
+    assert!(h.app.save_to_repo.is_some(), "a name with a folder in it closed the dialog");
+    assert!(!h.dir.join("escape.solidcraft").exists() && !h.dir.join("..").join("escape.solidcraft").exists());
+
+    // A plain name saves in the folder the panel showed, and the dialog closes.
+    h.run(&json!([
+        { "click": { "handle": "designs:save:name" } },
+        { "key": "a", "cmd": true },
+        { "text": "plate" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:designs", "value": 1 } } }
+    ]))
+    .unwrap();
+    assert!(h.dir.join("Parts/plate.solidcraft").is_file(), "saved in the wrong place: {:?}", listing(&h));
+    assert!(h.app.save_to_repo.is_none(), "the dialog stayed open after saving");
+
+    // The same name again asks first: one click is the question, the second replaces it.
+    h.run(&json!([{ "click": { "handle": "appbar:folder" } }, { "widget": "Save As…" }])).unwrap();
+    h.run(&json!([
+        { "click": { "handle": "designs:save:name" } },
+        { "key": "a", "cmd": true },
+        { "text": "plate" },
+        { "click": { "handle": "designs:save:save" } }
+    ]))
+    .unwrap();
+    assert!(h.app.save_to_repo.as_ref().is_some_and(|d| d.asks_to_replace()), "the first click replaced it");
+    h.run(&json!([{ "click": { "handle": "designs:save:save" } }])).unwrap();
+    assert!(h.app.save_to_repo.is_none(), "the second click did not replace");
 }
 
 #[test]
