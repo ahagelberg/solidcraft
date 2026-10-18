@@ -152,6 +152,30 @@ fn the_panel_can_be_dragged_wider_and_remembers_it() {
 }
 
 #[test]
+fn importable_files_are_listed_and_the_panel_shows_on_the_start_page() {
+    let mut h = panel();
+    // A STEP file next to a design: both rows, the STEP one from the importer.
+    std::fs::write(h.dir.join("bracket.step"), b"ISO-10303-21;\n").unwrap();
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "until": { "count": { "name": "designs:designs", "value": 2 } } }
+    ]))
+    .unwrap();
+    let rows = solidcraft_ui_egui::scenario::handles("designs:row:");
+    let names: Vec<&str> = rows.iter().map(|(n, _)| n.trim_start_matches("designs:row:")).collect();
+    assert!(names.contains(&"bracket") && names.contains(&"plate"), "{names:?}");
+
+    // The panel is on the start page too (the button hides it there like everywhere else).
+    h.run(&json!([{ "call": "ui.home", "params": { "open": true } }])).unwrap();
+    h.frames(3);
+    assert!(solidcraft_ui_egui::scenario::rect_of("designs:panel").is_some(), "no panel on the start page");
+    assert!(solidcraft_ui_egui::scenario::handle_at("designs:row:bracket").is_some(), "no STEP row on the start page");
+    h.run(&json!([{ "click": { "handle": "appbar:designs" } }])).unwrap();
+    h.frames(2);
+    assert!(solidcraft_ui_egui::scenario::rect_of("designs:panel").is_none(), "the button did not hide the start page's panel");
+}
+
+#[test]
 fn a_row_renames_and_deletes_its_design() {
     let mut h = panel();
     h.run(&json!([
