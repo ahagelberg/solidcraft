@@ -19,6 +19,14 @@ use crate::{IoError, MAX_DESIGN_BYTES, Result, design_metadata::replace};
 const VERSION: &str = "solidcraft-container/1";
 const LEGACY_VERSION: &str = "solvecraft-container/1";
 const PREVIEW_VERSION: &str = "solidcraft-preview/1";
+/// The entry that says which version the design at the root is (1 for a file saved before
+/// versions existed, or one that cannot say).
+const VERSIONS_ENTRY: &str = "versions.json";
+const VERSIONS_VERSION: &str = "solidcraft-versions/1";
+/// Where the kept versions live: `.history/<version>/document.json`, sharing the design's blobs.
+const HISTORY: &str = ".history";
+/// More versions than this in one file is not something a save made.
+const MAX_VERSIONS: u32 = 10_000;
 const MAX_ENTRIES: usize = 10_000;
 /// An embedded STEP source may be as large as an import accepts. It is always stored
 /// Deflate-compressed, so the file itself stays within [`MAX_DESIGN_BYTES`] (#3221).
@@ -37,6 +45,17 @@ const MAX_PREVIEW_TRIANGLES: usize = 100_000;
 #[derive(Default)]
 pub struct DesignPreview {
     pub meshes: Vec<MeshData>,
+}
+
+/// How many versions a design file holds: the current one's number. A file saved before versions
+/// existed (or one that cannot say) has [`Versions::ONE`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Versions {
+    pub current: u32,
+}
+
+impl Versions {
+    pub const ONE: Versions = Versions { current: 1 };
 }
 
 /// Fast favors interactive file operations; Compact trades CPU time for space.
@@ -110,6 +129,27 @@ impl PackageWriter {
         let name = format!("blobs/{}.{extension}", digest(bytes));
         self.part(&name, bytes, compressed)?;
         Ok(Value::String(name))
+    }
+
+    /// Copy an entry of the container being replaced (a kept version's document, or a blob it
+    /// references), compressed data and all, under `to`.
+    fn copy<R: Read + Seek>(&mut self, source: &mut zip::ZipArchive<R>, from: &str, to: &str) -> Result<()> {
+        if self.names.contains(to) {
+            return Ok(());
+        }
+        let size = {
+            let part = source.by_name(from).map_err(|e| invalid(format!("kept part `{from}`: {e}")))?;
+            usize::try_from(part.size()).unwrap_or(MAX_EXPANDED)
+        };
+        if size > MAX_DESIGN_BYTES {
+            return Err(invalid("part too large"));
+        }
+        self.expanded = self.expanded.checked_add(size).ok_or_else(|| invalid("expanded size overflow"))?;
+        if self.expanded > MAX_EXPANDED || self.names.len() >= MAX_ENTRIES {
+            return Err(invalid("package too large"));
+        }
+        self.names.insert(to.to_owned());
+        self.zip.raw_copy_file_rename(source.by_name(from).map_err(|e| invalid(format!("kept part `{from}`: {e}")))?, to).map_err(invalid)
     }
 }
 
@@ -212,7 +252,29 @@ pub fn write_design_container_with_thumbnail(
     geometry: Option<&solidcraft_doc::SavedModel>,
     thumbnail: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    write_container(doc, compression, preview, geometry, thumbnail, MAX_DESIGN_BYTES)
+    write_container(doc, compression, preview, geometry, thumbnail, None, MAX_DESIGN_BYTES).map(|(bytes, _)| bytes)
+}
+
+/// Save the design as the next version of `previous` (the container being replaced, if any),
+/// keeping the versions up to `base`: the one being edited (`None`: the previous file's current
+/// version). Versions after `base` go: saving an older version is what replaces them. Returns the
+/// container and the version it now holds.
+pub fn write_design_container_versioned(
+    doc: &Document,
+    compression: DesignCompression,
+    preview: Option<&DesignPreview>,
+    geometry: Option<&solidcraft_doc::SavedModel>,
+    thumbnail: Option<&[u8]>,
+    previous: Option<&[u8]>,
+    base: Option<u32>,
+) -> Result<(Vec<u8>, u32)> {
+    write_container(doc, compression, preview, geometry, thumbnail, previous.map(|p| (p, base)), MAX_DESIGN_BYTES)
+}
+
+/// The version a container at the root holds, and which of its versions stay (`keep`): a save
+/// over version `base` of a file at version `current` keeps 1‥=base.
+fn kept(current: u32, base: Option<u32>) -> u32 {
+    base.unwrap_or(current).clamp(1, current)
 }
 
 /// [`write_design_container_with_thumbnail`] within `budget` bytes for the optional caches (the
@@ -223,8 +285,9 @@ fn write_container(
     preview: Option<&DesignPreview>,
     geometry: Option<&solidcraft_doc::SavedModel>,
     thumbnail: Option<&[u8]>,
+    history: Option<(&[u8], Option<u32>)>,
     budget: usize,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, u32)> {
     let mut writer = PackageWriter { zip: zip::ZipWriter::new(Cursor::new(Vec::new())), names: BTreeSet::new(), expanded: 0, resolved: 0 };
     let mut features = Vec::with_capacity(doc.features.len());
     for feature in &doc.features {
@@ -293,6 +356,163 @@ fn write_container(
     if let Some(png) = thumbnail {
         thumbnail::write(&mut writer, png, &metadata)?;
     }
+    // The versions stay beside the current one: each kept document under `.history/<n>/`, and the
+    // blobs any of them references (content-addressed, so shared ones cost nothing).
+    let version = match history {
+        Some((previous, base)) => {
+            let mut source = zip::ZipArchive::new(Cursor::new(previous)).map_err(|e| invalid(format!("versions of the file being replaced: {e}")))?;
+            let current = versions_of(&mut source).current;
+            let keep = kept(current, base);
+            keep_versions(&mut writer, &mut source, current, keep)?;
+            keep.saturating_add(1)
+        }
+        None => 1,
+    };
+    writer.part(VERSIONS_ENTRY, &serde_json::to_vec(&json!({"format": VERSIONS_VERSION, "current": version})).map_err(invalid)?, false)?;
+    let bytes = writer.zip.finish().map_err(invalid)?.into_inner();
+    if bytes.len() > MAX_DESIGN_BYTES {
+        return Err(invalid("compressed file too large"));
+    }
+    Ok((bytes, version))
+}
+
+/// Copy the versions 1‥=`keep` of the container being replaced into the new one, with the blobs
+/// their documents reference. A previous file that cannot be read gives no history rather than
+/// failing the save: it is the new design that must reach the disk.
+fn keep_versions<R: Read + Seek>(writer: &mut PackageWriter, source: &mut zip::ZipArchive<R>, current: u32, keep: u32) -> Result<()> {
+    let mut blobs = Vec::new();
+    for version in 1..=keep {
+        let from = if version < current { format!("{HISTORY}/{version}/document.json") } else { "document.json".to_owned() };
+        let Ok(document) = by_name_bytes(source, &from, MAX_DESIGN_BYTES) else { continue };
+        blobs.extend(blob_refs(&document));
+        writer.copy(source, &from, &format!("{HISTORY}/{version}/document.json"))?;
+    }
+    blobs.sort();
+    blobs.dedup();
+    for name in blobs {
+        if source.by_name(&name).is_ok() {
+            writer.copy(source, &name, &name)?;
+        }
+    }
+    Ok(())
+}
+
+/// An entry of a container, decompressed.
+fn by_name_bytes<R: Read + Seek>(source: &mut zip::ZipArchive<R>, name: &str, limit: usize) -> Result<Vec<u8>> {
+    let mut part = source.by_name(name).map_err(|e| invalid(format!("part `{name}`: {e}")))?;
+    if part.size() > limit as u64 {
+        return Err(invalid("part too large"));
+    }
+    let mut bytes = Vec::with_capacity(part.size().min(limit as u64) as usize);
+    part.read_to_end(&mut bytes).map_err(invalid)?;
+    Ok(bytes)
+}
+
+/// The `blobs/…` names a stored document references (STEP sources, meshes, canvases).
+fn blob_refs(document: &[u8]) -> Vec<String> {
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) if text.starts_with("blobs/") && text.len() <= 128 => out.push(text.clone()),
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            Value::Object(map) => map.values().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(document) else { return Vec::new() };
+    let mut out = Vec::new();
+    walk(&value, &mut out);
+    out
+}
+
+/// The versions a container holds: the current one's number (1 when it says nothing).
+pub fn versions_of<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Versions {
+    let current = by_name_bytes(zip, VERSIONS_ENTRY, 4096)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| value.get("current").and_then(Value::as_u64))
+        .unwrap_or(1);
+    Versions { current: current.clamp(1, u64::from(MAX_VERSIONS)) as u32 }
+}
+
+/// The versions a container's bytes hold (its directory only: no payload is read).
+pub fn container_versions(bytes: &[u8]) -> Versions {
+    zip::ZipArchive::new(Cursor::new(bytes)).map(|mut zip| versions_of(&mut zip)).unwrap_or(Versions::ONE)
+}
+
+/// The versions a design file holds, without reading its payloads.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn container_versions_file(path: &std::path::Path) -> Option<Versions> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    Some(versions_of(&mut zip))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn container_versions_file(_path: &std::path::Path) -> Option<Versions> {
+    None
+}
+
+/// The document of one of a container's versions (`1‥=current`), with the blobs it references.
+pub fn read_design_version(bytes: &[u8], version: u32) -> Result<Document> {
+    let mut reader = PackageReader::new(Cursor::new(bytes))?;
+    let current = versions_of(&mut reader.zip).current;
+    if version == 0 || version > current {
+        return Err(invalid(format!("there is no version {version} (the design has {current})")));
+    }
+    if version == current {
+        return read_document(&mut reader);
+    }
+    read_document_at(&mut reader, &format!("{HISTORY}/{version}/document.json"))
+}
+
+/// Where a version's document lives in a container whose current version is `current`.
+fn document_entry(version: u32, current: u32) -> String {
+    if version < current { format!("{HISTORY}/{version}/document.json") } else { "document.json".to_owned() }
+}
+
+/// Rewrite a container with only some of its versions: the last of `keep` becomes the file's
+/// current version (its document moves to the root) and the ones before it are its history,
+/// numbered from 1 again. The current version's caches (picture, preview) stay only when it is
+/// still the current one: they belong to its document.
+pub fn rewrite_versions(bytes: &[u8], keep: &[u32]) -> Result<Vec<u8>> {
+    let mut source = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| invalid(format!("not a design container: {e}")))?;
+    let current = versions_of(&mut source).current;
+    if keep.is_empty() || keep.iter().any(|v| *v == 0 || *v > current) {
+        return Err(invalid(format!("there is no version to keep among {keep:?} (the design has {current})")));
+    }
+    if keep.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(invalid("the versions to keep must be in order, each once"));
+    }
+    let names: Vec<String> = source.file_names().filter_map(|name| name.ok().map(|n| n.into_owned())).collect();
+    let mut writer = PackageWriter { zip: zip::ZipWriter::new(Cursor::new(Vec::new())), names: BTreeSet::new(), expanded: 0, resolved: 0 };
+    let mut blobs = Vec::new();
+    for (index, version) in keep.iter().enumerate() {
+        let from = document_entry(*version, current);
+        let document = by_name_bytes(&mut source, &from, MAX_DESIGN_BYTES)?;
+        blobs.extend(blob_refs(&document));
+        let to = if index + 1 == keep.len() { "document.json".to_owned() } else { format!("{HISTORY}/{}/document.json", index + 1) };
+        writer.copy(&mut source, &from, &to)?;
+    }
+    // The container's own description always stays; the caches of the root document only while it
+    // is still the root document.
+    writer.copy(&mut source, "container.json", "container.json")?;
+    if keep.last() == Some(&current) {
+        for name in &names {
+            if name == "document.json" || name == VERSIONS_ENTRY || name.starts_with("blobs/") || name.starts_with(&format!("{HISTORY}/")) {
+                continue;
+            }
+            writer.copy(&mut source, name, name)?;
+        }
+    }
+    blobs.sort();
+    blobs.dedup();
+    for name in blobs {
+        if source.by_name(&name).is_ok() {
+            writer.copy(&mut source, &name, &name)?;
+        }
+    }
+    let versions = u32::try_from(keep.len()).map_err(|_| invalid("too many versions"))?;
+    writer.part(VERSIONS_ENTRY, &serde_json::to_vec(&json!({"format": VERSIONS_VERSION, "current": versions})).map_err(invalid)?, false)?;
     let bytes = writer.zip.finish().map_err(invalid)?.into_inner();
     if bytes.len() > MAX_DESIGN_BYTES {
         return Err(invalid(format!("the design would be {} MB, over the {} MB a design file may hold", bytes.len() >> 20, MAX_DESIGN_BYTES >> 20)));
@@ -422,8 +642,11 @@ impl<R: Read + Seek> PackageReader<R> {
     // Bind provisional caches and authoritative reconstruction to identical metadata,
     // even if another process overwrites the open file in place. Blobs remain hash-checked.
     fn document(&mut self, limit: usize) -> Result<Arc<[u8]>> {
+        self.document_at("document.json", limit)
+    }
+    fn document_at(&mut self, name: &str, limit: usize) -> Result<Arc<[u8]>> {
         if self.document.is_none() {
-            self.document = Some(self.limited_part("document.json", limit)?.into());
+            self.document = Some(self.limited_part(name, limit)?.into());
         }
         self.document.as_ref().filter(|d| d.len() <= limit).cloned().ok_or_else(|| invalid("metadata budget"))
     }
@@ -658,11 +881,16 @@ pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) 
 }
 
 fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Document> {
+    read_document_at(reader, "document.json")
+}
+
+/// Rebuild the document stored at `name` (the current one, or a kept version's).
+fn read_document_at<R: Read + Seek>(reader: &mut PackageReader<R>, name: &str) -> Result<Document> {
     let version: Value = serde_json::from_slice(&reader.part("container.json")?).map_err(invalid)?;
     if !matches!(version.get("format").and_then(Value::as_str), Some(VERSION | LEGACY_VERSION)) {
         return Err(invalid("unsupported container version"));
     }
-    let bytes = reader.document(MAX_DESIGN_BYTES)?;
+    let bytes = reader.document_at(name, MAX_DESIGN_BYTES)?;
     let metadata: Value = serde_json::from_slice(&bytes).map_err(invalid)?;
     let text = std::str::from_utf8(&bytes).map_err(invalid)?;
     // Migrations and all document validation run on the small parametric metadata.
@@ -875,12 +1103,12 @@ mod tests {
     #[test]
     fn a_model_cache_too_big_for_the_file_is_left_out_not_a_failed_save() {
         let doc = document();
-        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, 70_000).unwrap();
+        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, None, 70_000).unwrap().0;
         assert!(!parts(&bytes).contains_key("cache/model.json") && !parts(&bytes).contains_key("cache/bodies.bin"));
         assert!(read_design_geometry(&bytes).is_none());
         assert_eq!(crate::read_design(&bytes).unwrap().to_json(), doc.to_json());
         // With room for it, the same model is kept.
-        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, MAX_DESIGN_BYTES).unwrap();
+        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, None, MAX_DESIGN_BYTES).unwrap().0;
         assert!(read_design_geometry(&bytes).is_some());
     }
 
@@ -1148,6 +1376,82 @@ mod tests {
             component: 0,
         });
         doc
+    }
+
+    #[test]
+    fn a_save_keeps_the_version_it_replaces_and_an_old_version_can_replace_the_later_ones() {
+        // First save: version 1, nothing kept.
+        let mut first = Document::new("Versioned");
+        first.name = "first".into();
+        let (v1, version) = write_design_container_versioned(&first, DesignCompression::Fast, None, None, None, None, None).unwrap();
+        assert_eq!(version, 1);
+        assert_eq!(container_versions(&v1), Versions { current: 1 });
+        assert_eq!(crate::read_design(&v1).unwrap().name, "first");
+
+        // Second save: version 2, version 1 kept under .history/1.
+        let mut second = first.clone();
+        second.name = "second".into();
+        let (v2, version) = write_design_container_versioned(&second, DesignCompression::Fast, None, None, None, Some(&v1), None).unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(container_versions(&v2), Versions { current: 2 });
+        assert_eq!(crate::read_design(&v2).unwrap().name, "second");
+        assert_eq!(read_design_version(&v2, 1).unwrap().name, "first");
+        assert_eq!(read_design_version(&v2, 2).unwrap().name, "second");
+        assert!(read_design_version(&v2, 3).is_err());
+        assert!(parts(&v2).contains_key(".history/1/document.json"));
+
+        // A third save keeps two: 1 and 2.
+        let mut third = second.clone();
+        third.name = "third".into();
+        let (v3, version) = write_design_container_versioned(&third, DesignCompression::Fast, None, None, None, Some(&v2), None).unwrap();
+        assert_eq!(version, 3);
+        assert_eq!(read_design_version(&v3, 1).unwrap().name, "first");
+        assert_eq!(read_design_version(&v3, 2).unwrap().name, "second");
+
+        // Saving version 1 over the file drops 2 and 3: the new current is version 2.
+        let mut edited = first.clone();
+        edited.name = "edited the first".into();
+        let (v4, version) = write_design_container_versioned(&edited, DesignCompression::Fast, None, None, None, Some(&v3), Some(1)).unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(container_versions(&v4), Versions { current: 2 });
+        assert_eq!(crate::read_design(&v4).unwrap().name, "edited the first");
+        assert_eq!(read_design_version(&v4, 1).unwrap().name, "first");
+        assert!(read_design_version(&v4, 3).is_err());
+        assert!(!parts(&v4).keys().any(|n| n.starts_with(".history/2/")));
+    }
+
+    #[test]
+    fn promoting_a_version_drops_the_later_ones_and_purging_older_ones_renumbers_the_rest() {
+        let mut first = Document::new("History");
+        first.name = "first".into();
+        let (v1, _) = write_design_container_versioned(&first, DesignCompression::Fast, None, None, None, None, None).unwrap();
+        let mut second = first.clone();
+        second.name = "second".into();
+        let (v2, _) = write_design_container_versioned(&second, DesignCompression::Fast, None, None, None, Some(&v1), None).unwrap();
+        let mut third = second.clone();
+        third.name = "third".into();
+        let (v3, _) = write_design_container_versioned(&third, DesignCompression::Fast, None, None, None, Some(&v2), None).unwrap();
+
+        // Promote version 2: it is the latest now, version 3 is gone.
+        let promoted = rewrite_versions(&v3, &[1, 2]).unwrap();
+        assert_eq!(container_versions(&promoted), Versions { current: 2 });
+        assert_eq!(crate::read_design(&promoted).unwrap().name, "second");
+        assert_eq!(read_design_version(&promoted, 1).unwrap().name, "first");
+        assert!(read_design_version(&promoted, 3).is_err());
+
+        // Purging the versions before 2: what stays renumbers from 1, the current stays current.
+        let purged = rewrite_versions(&v3, &[2, 3]).unwrap();
+        assert_eq!(container_versions(&purged), Versions { current: 2 });
+        assert_eq!(crate::read_design(&purged).unwrap().name, "third");
+        assert_eq!(read_design_version(&purged, 1).unwrap().name, "second");
+        assert!(!parts(&purged).keys().any(|n| n.starts_with(".history/2/")));
+
+        // Keeping only the current one leaves no history at all, and says no to nonsense.
+        let only = rewrite_versions(&v3, &[3]).unwrap();
+        assert_eq!(container_versions(&only), Versions { current: 1 });
+        assert!(rewrite_versions(&v3, &[]).is_err());
+        assert!(rewrite_versions(&v3, &[4]).is_err());
+        assert!(rewrite_versions(&v3, &[2, 1]).is_err());
     }
 
     fn parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {

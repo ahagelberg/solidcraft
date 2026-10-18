@@ -32,6 +32,13 @@
   folders (and can make a new one), and cannot write anywhere outside the repository. A name
   already taken asks before it replaces the file, and **Plain JSON** saves a `.json` design rather
   than the container.
+  Every save keeps the version it replaces: the button at the right of a design's row (`V3 ▾`)
+  lists the file's versions, newest first, with the current one marked. Picking an older one asks
+  before it opens it, because saving it deletes the versions after it. Right-click a version for
+  **Promote to Latest** (it becomes the current version and the later ones are deleted) and
+  **Purge Older Versions** (the ones before it are deleted and the rest renumber from 1); both say
+  exactly which versions go and ask first, and the list stays open beside that menu so the version
+  it belongs to is never hidden.
   Drag the panel's right edge to widen or narrow it; it reopens at that width. Click a row and
   press **F2** to rename that design or folder, with the whole name selected as a file browser
   does (elsewhere F2 renames what is selected in the design). Right-click a
