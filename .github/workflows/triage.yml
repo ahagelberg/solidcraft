@@ -33,9 +33,7 @@ concurrency:
 jobs:
   triage:
     name: Triage bot
-    # The bots run main's own scripts (never PR code), so the trusted light runner takes them
-    # and GitHub's shared runners stay free for pull request builds.
-    runs-on: self-hosted-light
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Filtered here so the common events (every comment, every label) start no runner.
     if: >-

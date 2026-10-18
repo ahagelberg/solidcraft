@@ -27,9 +27,7 @@ concurrency:
 jobs:
   claim:
     name: Claim bot
-    # The bots run main's own scripts (never PR code), so the trusted light runner takes them
-    # and GitHub's shared runners stay free for pull request builds.
-    runs-on: self-hosted-light
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: >-
       github.event_name != 'issue_comment' ||
