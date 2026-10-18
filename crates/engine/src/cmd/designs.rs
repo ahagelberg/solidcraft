@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("folder")
         .noundo()
         .doc_only()
-        .params("path: an absolute folder -> {path, folders: [{name, path, description, has_thumbnail}], designs: [{name, path, modified, kind}], truncated}; at most 2000 entries. `designs` lists the designs and the files SolidCraft can import (`kind`: `design`, or `step` for STEP, IGES, FreeCAD and Rhino, `mesh` for 3MF, STL, OBJ and glTF)"),
+        .params("path: an absolute folder -> {path, folders: [{name, path, description, has_thumbnail}], designs: [{name, path, modified, kind, versions}], truncated}; at most 2000 entries. `designs` lists the designs and the files SolidCraft can import (`kind`: `design`, or `step` for STEP, IGES, FreeCAD and Rhino, `mesh` for 3MF, STL, OBJ and glTF); `versions` is how many versions a design file holds (1 when it has none)"),
     CommandSpec::new("designs.folder_new", "New Folder", folder_new)
         .icon("new")
         .noundo()
@@ -51,6 +51,16 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .doc_only()
         .params("path: an absolute project folder; description?: text (at most 2000 characters); thumbnail_source?: an image file to copy in (PNG/JPEG/WebP, at most 20 MB); remove_thumbnail?: bool (applied before thumbnail_source) -> {description, has_thumbnail}"),
+    CommandSpec::new("designs.version_promote", "Promote Version", version_promote)
+        .icon("checkpoint")
+        .noundo()
+        .doc_only()
+        .params("path: a design file; version: the version to keep as the latest -> {path, version, versions}. The versions after it are deleted; the ones before it stay"),
+    CommandSpec::new("designs.version_purge", "Purge Older Versions", version_purge)
+        .icon("delete")
+        .noundo()
+        .doc_only()
+        .params("path: a design file; version: the oldest version to keep -> {path, version, versions}. The versions before it are deleted; the ones kept renumber from 1"),
 ];
 
 /// The `designs.list` answer for a folder, also used by the Designs panel on a worker thread
@@ -100,7 +110,9 @@ fn list_at(root: &Path) -> Result<Value> {
         {
             let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&name).to_string();
-            designs.push(json!({ "name": stem, "path": path.to_string_lossy(), "modified": modified, "kind": kind }));
+            // A design's versions (the directory only: no payload is read).
+            let versions = if kind == "design" { solidcraft_io::container_versions_file(&path).map(|v| v.current).unwrap_or(1) } else { 1 };
+            designs.push(json!({ "name": stem, "path": path.to_string_lossy(), "modified": modified, "kind": kind, "versions": versions }));
         }
     }
     folders.sort_by(|a, b| natural_cmp(a["name"].as_str().unwrap_or(""), b["name"].as_str().unwrap_or("")));
@@ -269,6 +281,61 @@ fn project_set(_s: &mut Session, p: &Value) -> Result<Value> {
         "description": meta.description,
         "has_thumbnail": solidcraft_io::project::has_thumbnail(&path),
     }))
+}
+
+/// The version a version command asks for, checked against the file's own count.
+fn asked_version(p: &Value, cmd: &str, current: u32) -> Result<u32> {
+    let version = p
+        .get("version")
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| bad(cmd, "`version` must be a version number (1 is the first)"))?;
+    if version == 0 || version > current {
+        return Err(bad(cmd, format!("there is no version {version} (the design has {current})")));
+    }
+    Ok(version)
+}
+
+/// Read a design file's bytes, handing them to `rewrite`, and put the result back atomically
+/// (keeping the file being replaced as `<file>.bak`).
+fn rewrite_design_versions(p: &Value, cmd: &str, rewrite: impl FnOnce(&[u8], u32) -> Result<(Vec<u8>, u32)>) -> Result<Value> {
+    let path = given_path(p, cmd)?;
+    let bytes = std::fs::read(&path).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))?;
+    if !solidcraft_io::is_design_container(&bytes) {
+        return Err(bad(cmd, format!("{} is not a design container: only a design has versions", path.display())));
+    }
+    let current = solidcraft_io::container_versions(&bytes).current;
+    let (bytes, version) = rewrite(&bytes, current)?;
+    solidcraft_io::write_atomic(&path, &bytes, true).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))?;
+    Ok(json!({ "path": path.to_string_lossy(), "version": version, "versions": version }))
+}
+
+fn version_promote(_s: &mut Session, p: &Value) -> Result<Value> {
+    if cfg!(target_arch = "wasm32") {
+        return Err(unsupported());
+    }
+    let cmd = "designs.version_promote";
+    rewrite_design_versions(p, cmd, |bytes, current| {
+        let version = asked_version(p, cmd, current)?;
+        // The promoted version becomes the latest; everything after it goes.
+        let keep: Vec<u32> = (1..=version).collect();
+        let bytes = solidcraft_io::rewrite_versions(bytes, &keep).map_err(|e| bad(cmd, format!("{}: {e}", str_(p, "path").unwrap_or_default())))?;
+        Ok((bytes, version))
+    })
+}
+
+fn version_purge(_s: &mut Session, p: &Value) -> Result<Value> {
+    if cfg!(target_arch = "wasm32") {
+        return Err(unsupported());
+    }
+    let cmd = "designs.version_purge";
+    rewrite_design_versions(p, cmd, |bytes, current| {
+        let version = asked_version(p, cmd, current)?;
+        // The versions before it go; the ones kept renumber from 1, so the current one moves down.
+        let keep: Vec<u32> = (version..=current).collect();
+        let bytes = solidcraft_io::rewrite_versions(bytes, &keep).map_err(|e| bad(cmd, format!("{}: {e}", str_(p, "path").unwrap_or_default())))?;
+        Ok((bytes, current - version + 1))
+    })
 }
 
 fn unsupported() -> EngineError {
@@ -457,6 +524,52 @@ mod tests {
         assert_eq!(names(&v, "folders"), ["alpha", "Part 2", "Part 10"]);
         assert_eq!(names(&v, "designs"), ["a2", "a10", "b"]);
         assert_eq!(v["truncated"], json!(false));
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    fn promoting_a_version_and_purging_the_older_ones_rewrite_the_file() {
+        let d = temp("versions");
+        let path = d.join("part.solidcraft");
+        let path_text = path.to_string_lossy().into_owned();
+        let mut doc = solidcraft_doc::Document::new("Versioned");
+        doc.name = "first".into();
+        let (v1, _) =
+            solidcraft_io::write_design_container_versioned(&doc, solidcraft_io::DesignCompression::Fast, None, None, None, None, None).unwrap();
+        std::fs::write(&path, &v1).unwrap();
+        let mut s = Session::default();
+        for name in ["second", "third"] {
+            s.execute("doc.open", &json!({"path": path_text})).unwrap();
+            s.doc_mut().name = name.into();
+            s.execute("file.save", &json!({})).unwrap();
+        }
+        assert_eq!(solidcraft_io::container_versions(&std::fs::read(&path).unwrap()).current, 3);
+
+        // Promote version 1: it is the latest, and 2 and 3 are gone.
+        let promoted = version_promote(&mut s, &json!({"path": path_text, "version": 1})).unwrap();
+        assert_eq!(promoted["versions"], json!(1));
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(solidcraft_io::container_versions(&bytes).current, 1);
+        assert_eq!(solidcraft_io::read_design(&bytes).unwrap().name, "first");
+        assert!(version_promote(&mut s, &json!({"path": path_text, "version": 2})).is_err());
+
+        // Two more saves, then purge everything before the last one.
+        for name in ["fourth", "fifth"] {
+            s.execute("doc.open", &json!({"path": path_text})).unwrap();
+            s.doc_mut().name = name.into();
+            s.execute("file.save", &json!({})).unwrap();
+        }
+        assert_eq!(solidcraft_io::container_versions(&std::fs::read(&path).unwrap()).current, 3);
+        let purged = version_purge(&mut s, &json!({"path": path_text, "version": 3})).unwrap();
+        assert_eq!(purged["versions"], json!(1), "only the current one stays");
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(solidcraft_io::read_design(&bytes).unwrap().name, "fifth");
+        assert!(solidcraft_io::read_design_version(&bytes, 2).is_err());
+        assert!(version_purge(&mut s, &json!({"path": path_text, "version": 9})).is_err());
+        // Something that is not a design container is refused.
+        let json_design = d.join("plain.json");
+        std::fs::write(&json_design, b"{}").unwrap();
+        assert!(version_promote(&mut s, &json!({"path": json_design.to_string_lossy(), "version": 1})).is_err());
         std::fs::remove_dir_all(d).unwrap();
     }
 

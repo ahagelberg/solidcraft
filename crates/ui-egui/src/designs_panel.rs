@@ -57,6 +57,19 @@ pub struct State {
     refresh: bool,
     /// An open Project Properties window.
     pub properties: Option<crate::designs_properties::Properties>,
+    /// A version's own menu (right-clicked in the version list).
+    version_menu: Option<VersionMenu>,
+}
+
+/// A version's menu: which version, of how many, and where it was asked for.
+#[derive(Clone)]
+struct VersionMenu {
+    path: String,
+    version: u32,
+    versions: u32,
+    at: egui::Pos2,
+    /// Opened this frame: the click that opened it is not a click outside it.
+    fresh: bool,
 }
 
 struct Rename {
@@ -97,6 +110,8 @@ struct DesignRow {
     /// `design`, or what imports it: `step` (STEP, IGES, FreeCAD, Rhino) or `mesh` (3MF, STL,
     /// OBJ, glTF).
     kind: String,
+    /// How many versions the file holds (the current one's number).
+    versions: u32,
 }
 
 impl Entries {
@@ -127,6 +142,7 @@ impl Entries {
                     path: d.get("path").and_then(Value::as_str)?.to_string(),
                     modified: d.get("modified").and_then(Value::as_u64).unwrap_or(0),
                     kind: d.get("kind").and_then(Value::as_str).unwrap_or("design").to_string(),
+                    versions: d.get("versions").and_then(Value::as_u64).unwrap_or(1).clamp(1, 100_000) as u32,
                 })
             })
             .collect();
@@ -136,11 +152,34 @@ impl Entries {
 
 enum Action {
     Open(String),
+    /// Open an older version of a design (`version` of `versions`).
+    OpenVersion {
+        path: String,
+        version: u32,
+        versions: u32,
+    },
+    /// Open a version's own menu at `at` (right-clicked in the version list).
+    VersionMenu {
+        path: String,
+        version: u32,
+        versions: u32,
+        at: egui::Pos2,
+    },
     Insert(String),
-    Rename { path: String, name: String },
+    Rename {
+        path: String,
+        name: String,
+    },
     Move(String),
-    Delete { path: String, name: String, folder: bool },
-    Properties { path: String, name: String },
+    Delete {
+        path: String,
+        name: String,
+        folder: bool,
+    },
+    Properties {
+        path: String,
+        name: String,
+    },
 }
 
 /// How narrow and how wide the panel can be dragged.
@@ -151,6 +190,7 @@ pub const WIDTH_MAX: f32 = 520.0;
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !app.services.designs_panel || !app.preferences.repositories_panel {
         app.designs.panel_rect = None;
+        app.designs.version_menu = None;
         return;
     }
     accept_drag(app, ui.ctx());
@@ -188,6 +228,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.preferences.designs_width = dragged;
     }
     confirm_delete(app, ui.ctx());
+    version_menu(app, ui.ctx());
     crate::designs_properties::show(app, ui.ctx());
 }
 
@@ -726,12 +767,113 @@ fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &Desig
     draw_picture(app, ui, rect, &design.path, icon);
     let sub = crate::local_time::format(design.modified);
     row_text(app, ui, rect, &design.path, &design.name, &sub);
+    if design.kind == "design" {
+        version_button(ui, rect, design, actions);
+    }
     if response.double_clicked() {
         actions.push(Action::Open(design.path.clone()));
     }
     let path = design.path.clone();
     let name = design.name.clone();
     response.context_menu(|ui| design_menu(app, ui, &path, &name, actions));
+}
+
+/// The row's version selector (`V3`), like a file browser's: it lists the versions, newest first,
+/// and opens one (the current one opens at once; an older one asks first).
+fn version_button(ui: &mut egui::Ui, row: egui::Rect, design: &DesignRow, actions: &mut Vec<Action>) {
+    let rect = egui::Rect::from_center_size(pos2(row.right() - 27.0, row.top() + 20.0), vec2(46.0, 18.0));
+    let button = ui.put(rect, egui::Button::new(RichText::new(format!("V{} ▾", design.versions)).size(11.0)).small());
+    crate::scenario::publish_handle(&format!("designs:versions:{}", design.name), button.rect.center());
+    crate::scenario::publish_count(&format!("designs:version:{}", design.name), f64::from(design.versions));
+    let path = design.path.clone();
+    let versions = design.versions;
+    let mut chosen = None;
+    // Where the version's own menu goes: beside the list, so the list stays readable.
+    let mut menu = None;
+    let mut menu_at = None;
+    // The popup is offered every frame (it keeps its own open state), not only on the click frame.
+    // A click on one of the versions does not close it by itself: choosing one closes it, while a
+    // right click keeps it open beside the version's own menu (below).
+    egui::Popup::menu(&button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        for version in (1..=versions).rev() {
+            let current = version == versions;
+            let label = if current {
+                crate::i18n::format("designs.version_current", &[("version", &version.to_string())])
+            } else {
+                crate::i18n::format("designs.version", &[("version", &version.to_string())])
+            };
+            let item = ui.button(label);
+            if item.clicked() {
+                chosen = Some(version);
+                ui.close();
+            }
+            // A version's own menu (right click): make it the latest, or drop the ones before it.
+            // The list stays open, so the menu never floats alone.
+            if item.secondary_clicked() {
+                menu = Some(version);
+                menu_at = Some(item.rect.right_top() + vec2(4.0, 0.0));
+            }
+        }
+    });
+    if let Some(version) = menu {
+        let at = menu_at.or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(rect.left_bottom());
+        actions.push(Action::VersionMenu { path, version, versions, at });
+    } else {
+        match chosen {
+            Some(version) if version == versions => actions.push(Action::Open(path)),
+            Some(version) => actions.push(Action::OpenVersion { path, version, versions }),
+            None => {}
+        }
+    }
+}
+
+/// A version's own menu, drawn where it was right-clicked in the version list: promote it (the
+/// later versions go) or purge the ones before it. Both ask before they delete anything.
+///
+/// The list closes when one of its versions is right-clicked (egui closes the popups it opened),
+/// so the menu is kept here and drawn by the panel instead.
+fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(menu) = app.designs.version_menu.clone() else { return };
+    let mut ask = None;
+    let t = Tokens::get();
+    let area = egui::Area::new(egui::Id::new("designs-version-menu")).order(egui::Order::Foreground).fixed_pos(menu.at).show(ctx, |ui| {
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            ui.set_min_width(190.0);
+            ui.label(RichText::new(crate::i18n::format("designs.version", &[("version", &menu.version.to_string())])).size(10.5).color(t.text_dim));
+            ui.add_space(2.0);
+            let width = ui.available_width();
+            let up = ui.add_enabled(
+                menu.version < menu.versions,
+                egui::Button::new(RichText::new(crate::i18n::tr("designs.promote")).size(12.0)).min_size(vec2(width, 20.0)),
+            );
+            if up.on_disabled_hover_text(crate::i18n::tr("designs.promote_current")).clicked() {
+                ask = Some(true);
+            }
+            let older = ui.add_enabled(
+                menu.version > 1,
+                egui::Button::new(RichText::new(crate::i18n::tr("designs.purge_older")).size(12.0)).min_size(vec2(width, 20.0)),
+            );
+            if older.on_disabled_hover_text(crate::i18n::tr("designs.purge_first")).clicked() {
+                ask = Some(false);
+            }
+        });
+    });
+    let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    let clicked_outside = !menu.fresh && ctx.input(|i| i.pointer.any_click()) && !area.response.contains_pointer();
+    let question = match ask {
+        Some(true) => Some(crate::designs_versions::Prompt::Promote { path: menu.path.clone(), version: menu.version, versions: menu.versions }),
+        Some(false) => Some(crate::designs_versions::Prompt::PurgeOlder { path: menu.path.clone(), version: menu.version, versions: menu.versions }),
+        None => None,
+    };
+    let asked = question.is_some();
+    if let Some(question) = question {
+        app.version_prompt = Some(question);
+    }
+    if asked || escape || clicked_outside {
+        app.designs.version_menu = None;
+    } else if let Some(open) = app.designs.version_menu.as_mut() {
+        open.fresh = false;
+    }
 }
 
 fn folder_menu(_app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, actions: &mut Vec<Action>) {
@@ -796,6 +938,13 @@ fn design_menu(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, ac
 fn apply(app: &mut SolveApp, action: Action) {
     match action {
         Action::Open(path) => app.open_path_async(&path),
+        Action::OpenVersion { path, version, versions } => {
+            // Opening an old version asks first: it is history, not the design as it stands.
+            app.version_prompt = Some(crate::designs_versions::Prompt::Open { path, version, versions });
+        }
+        Action::VersionMenu { path, version, versions, at } => {
+            app.designs.version_menu = Some(VersionMenu { path, version, versions, at, fresh: true });
+        }
         Action::Insert(path) => insert_design(app, &path),
         Action::Rename { path, name } => app.designs.rename = Some(Rename { path, name, select_all: true }),
         Action::Move(path) => {
@@ -973,13 +1122,21 @@ fn accept_drag(app: &mut SolveApp, ctx: &egui::Context) {
 /// A save changed a design's picture: show the new one next time.
 pub fn invalidate(app: &mut SolveApp, path: &str) {
     app.designs.thumbnails.remove(path);
-    app.designs.entries = None;
+    app.designs.relist();
 }
 
 impl State {
+    /// List the folder again. A listing already running asked before whatever changed (a save in
+    /// place, a menu action), so it is dropped: its answer would put the old folder back.
+    pub(crate) fn relist(&mut self) {
+        self.entries = None;
+        self.listing = None;
+        self.failed = None;
+    }
+
     /// A project's metadata or name changed: list again and drop its picture.
     pub(crate) fn refresh_after_change(&mut self, path: &str) {
-        self.entries = None;
+        self.relist();
         self.refresh = true;
         self.thumbnails.remove(path);
     }

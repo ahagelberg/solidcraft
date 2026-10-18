@@ -15,7 +15,8 @@ fn panel() -> Harness {
     h.app.preferences.repositories =
         vec![Repository { id: "test".into(), name: "Test".into(), description: String::new(), path: h.dir.to_string_lossy().into_owned() }];
     h.app.preferences.active_repository = "test".into();
-    h.frames(4);
+    // The listing is a background job: wait for it rather than guess a frame count.
+    h.run(&json!([{ "until": { "count": { "name": "designs:folders", "value": 0 } } }])).unwrap();
     h
 }
 
@@ -38,7 +39,7 @@ fn a_repository_folder_that_cannot_be_made_is_reported_not_spun_on() {
 
     // The panel says the folder is not available, with the reason, and is not waiting on it.
     h.run(&json!([
-        { "expect": { "count": { "name": "designs:unavailable", "value": 1 } } },
+        { "until": { "count": { "name": "designs:unavailable", "value": 1 } } },
         { "expect": { "count": { "name": "designs:loading", "value": 0 } } }
     ]))
     .unwrap();
@@ -100,6 +101,7 @@ fn the_panel_lists_a_repository_and_makes_a_folder() {
     // A folder opens on a double click, and the breadcrumb walks back out of it.
     h.run(&json!([
         { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/Brackets/inner.solidcraft" } } },
+        { "until": { "shown_handles": ["designs:row:Brackets"] } },
         { "click": { "handle": "designs:row:Brackets" }, "double": true },
         { "until": { "count": { "name": "designs:designs", "value": 1 } } },
         { "expect": { "count": { "name": "designs:folders", "value": 0 } } },
@@ -233,6 +235,40 @@ fn importable_files_are_listed_and_the_panel_shows_on_the_start_page() {
 }
 
 #[test]
+fn the_row_lists_the_versions_and_an_old_one_asks_before_it_opens_and_saves() {
+    let mut h = panel();
+    // Two saves: the file now holds version 1 and version 2.
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "call": "engine.execute", "params": { "command": "file.save", "params": {} } },
+        { "until": { "count": { "name": "designs:designs", "value": 1 } } }
+    ]))
+    .unwrap();
+    assert!(solidcraft_ui_egui::scenario::handle_at("designs:versions:plate").is_some(), "no version selector on the row");
+
+    // The selector lists both; picking version 1 asks first.
+    h.run(&json!([{ "click": { "handle": "designs:versions:plate" } }, { "widget": "Version 1" }])).unwrap();
+    assert!(
+        matches!(h.app.version_prompt, Some(solidcraft_ui_egui::designs_versions::Prompt::Open { version: 1, versions: 2, .. })),
+        "opening version 1 did not ask: {:?}",
+        h.app.version_prompt
+    );
+    h.run(&json!([{ "widget": "Open It" }])).unwrap();
+    assert_eq!(h.app.session.version, Some(1), "version 1 did not open");
+
+    // Saving it would delete version 2: the save asks, and only the answer saves.
+    h.run(&json!([{ "key": "s", "cmd": true }])).unwrap();
+    assert!(
+        matches!(h.app.version_prompt, Some(solidcraft_ui_egui::designs_versions::Prompt::SaveDeletesLater { version: 1, versions: 2 })),
+        "saving version 1 did not ask: {:?}",
+        h.app.version_prompt
+    );
+    h.run(&json!([{ "widget": "Save" }])).unwrap();
+    assert_eq!(h.app.session.version, None, "the save did not go through");
+    assert_eq!(h.app.session.versions, 2, "the edited version 1 should be the file's version 2");
+}
+
+#[test]
 fn a_row_renames_and_deletes_its_design() {
     let mut h = panel();
     h.run(&json!([
@@ -266,4 +302,68 @@ fn a_row_renames_and_deletes_its_design() {
     ]))
     .unwrap();
     assert!(!h.dir.join("dish.solidcraft").exists(), "delete left {:?}", listing(&h));
+}
+
+#[test]
+fn a_version_is_promoted_to_latest_or_the_older_ones_purged_from_its_menu() {
+    let mut h = panel();
+    // Three saves: the file holds versions 1, 2 and 3.
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "call": "engine.execute", "params": { "command": "file.save", "params": {} } },
+        { "call": "engine.execute", "params": { "command": "file.save", "params": {} } },
+        { "until": { "count": { "name": "designs:version:plate", "value": 3.0 } } }
+    ]))
+    .unwrap();
+
+    // Right-click version 2 in the selector: promote it (version 3 goes) after a question.
+    h.run(&json!([
+        { "click": { "handle": "designs:versions:plate" } },
+        { "widget": "Version 2", "button": "right" },
+        { "widget": "Promote to Latest" }
+    ]))
+    .unwrap();
+    assert!(
+        matches!(h.app.version_prompt, Some(solidcraft_ui_egui::designs_versions::Prompt::Promote { version: 2, versions: 3, .. })),
+        "promoting version 2 did not ask: {:?}",
+        h.app.version_prompt
+    );
+    // Cancelling changes nothing.
+    h.run(&json!([{ "click": { "handle": "designs:version_cancel" } }])).unwrap();
+    assert_eq!(solidcraft_ui_egui::scenario::count_of("designs:version:plate"), Some(3.0), "cancel changed the file");
+    // Agreeing drops version 3 and lists the file again: two versions are left.
+    h.run(&json!([
+        { "click": { "handle": "designs:versions:plate" } },
+        { "widget": "Version 2", "button": "right" },
+        { "widget": "Promote to Latest" },
+        { "click": { "handle": "designs:version_go" } },
+        { "until": { "count": { "name": "designs:version:plate", "value": 2.0 } } }
+    ]))
+    .unwrap();
+    assert_eq!(h.app.session.versions, 2, "the open design still thinks the file holds three versions");
+
+    // Purging older ones from version 2's menu deletes version 1 and renumbers the rest.
+    h.run(&json!([
+        { "click": { "handle": "designs:versions:plate" } },
+        { "widget": "Version 2", "button": "right" },
+        { "widget": "Purge Older Versions" },
+        { "click": { "handle": "designs:version_go" } },
+        { "until": { "count": { "name": "designs:version:plate", "value": 1.0 } } }
+    ]))
+    .unwrap();
+    assert!(h.app.version_prompt.is_none(), "the purge left a question open: {:?}", h.app.version_prompt);
+    // One version is left, and the file still opens.
+    h.run(&json!([{ "call": "engine.execute", "params": { "command": "doc.open", "params": { "path": "$DIR/plate.solidcraft" } } }])).unwrap();
+    assert_eq!(h.app.session.versions, 1, "the purged file does not hold one version");
+}
+
+#[test]
+fn the_row_reports_the_version_the_file_holds() {
+    let mut h = panel();
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "call": "engine.execute", "params": { "command": "file.save", "params": {} } },
+        { "until": { "count": { "name": "designs:version:plate", "value": 2.0 } } }
+    ]))
+    .unwrap();
 }
