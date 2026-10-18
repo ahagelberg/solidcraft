@@ -21,7 +21,8 @@
   the folders, each design with its
   thumbnail and the date it was last saved; a folder that is missing is made when the panel first
   shows it, and one that cannot be made says so, with the reason and a **Try Again** button. A
-  folder opens on a double click and the breadcrumb above walks back out. **New Folder** makes one.
+  folder opens on a double click and the breadcrumb above walks back out: its house is the
+  repository's own folder (the repository's name is in the house's tooltip). **New Folder** makes one.
   Files SolidCraft can import (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ and glTF) are listed
   beside the designs with the import icon: double-click one to open it as a new design, drag it
   into an open design to place it, or right-click it for the same menu (Insert, Rename, Move…,
