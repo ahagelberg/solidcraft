@@ -85,6 +85,8 @@ pub struct AppBar<'a> {
     /// The File button's label; it is enabled with `home`, and drawn held while its menu is open.
     pub file: &'a str,
     pub file_open: bool,
+    /// The bar keeps a slot for the app's Designs panel button, left of File.
+    pub designs: bool,
     /// The file actions after File.
     pub actions: Vec<BarButton<'a>>,
     /// How many quick-access buttons the app draws after them (one `step` each).
@@ -130,6 +132,8 @@ pub struct BarOut {
     pub actions: Vec<BarAction>,
     /// The File button, where its menu opens.
     pub file: Rect,
+    /// Where the app's Designs panel button goes (its centre x), when the bar keeps a slot.
+    pub designs: Option<f32>,
     /// The quick-access buttons: the first one's centre x and the step between them.
     pub quick: Option<(f32, f32)>,
     /// Where an offer pill may go (right-aligned in it), and whether it may carry its label.
@@ -262,6 +266,11 @@ pub fn show(ui: &mut egui::Ui, data: &AppBar, bar: Rect, content: Rect) -> BarOu
     x = home.right() + 8.0;
     separator(ui, r, x, "brand", h);
     x += 16.0;
+    // The app's Designs panel button, left of the File menu.
+    let designs = data.designs.then_some(x);
+    if data.designs {
+        x += 30.0;
+    }
     // The File menu's text button.
     let galley = ui.painter().layout_no_wrap(data.file.to_string(), FontId::proportional(t.font_button), t.app_bar_text);
     let file = Rect::from_min_size(pos2(x - 13.0, r.center().y - 13.0), vec2(galley.size().x + 16.0, 26.0));
@@ -388,7 +397,7 @@ pub fn show(ui: &mut egui::Ui, data: &AppBar, bar: Rect, content: Rect) -> BarOu
             actions.push(BarAction::Version);
         }
     }
-    BarOut { actions, file, quick, offer, offer_labeled, tabs_start, controls_left, search, assistant }
+    BarOut { actions, file, designs, quick, offer, offer_labeled, tabs_start, controls_left, search, assistant }
 }
 
 /// Where the tab strip publishes its parts: each prefix is followed by the tab's place.

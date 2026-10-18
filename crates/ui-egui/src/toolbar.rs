@@ -234,6 +234,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 home: app_bar::BarButton { id: "home", icon: "home", tip: app.tr("ui.start_page"), enabled: idle, narrow: false, wide_only: false },
                 file: app.tr("ui.file"),
                 file_open,
+                designs: app.services.designs_panel,
                 actions: vec![
                     action("save", "save", &save_tip, shown, false),
                     action("undo", "undo", &undo_tip, shown, true),
@@ -254,6 +255,11 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 handles: APP_BAR_HANDLES,
             };
             let out = app_bar::show(ui, &bar, r, content);
+            if let Some(at) = out.designs {
+                if crate::designs_panel::app_bar_button(app, ui, r, at, idle) {
+                    app.ui.show_designs = !app.ui.show_designs;
+                }
+            }
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("sc_file_menu_x"), out.file.left()));
             for action in &out.actions {
                 match action {
@@ -558,7 +564,7 @@ pub fn save(app: &mut SolveApp) {
     if app.session.path.is_some() {
         // Read-only, or changed on disk since it was opened: Save As, or a question, instead.
         if crate::open_elsewhere::check_save(app) {
-            crate::save_job::start(app, "file.save", json!({}));
+            crate::save_job::start(app, "file.save", json!({ "cache": true }));
         }
     } else {
         save_as(app);
@@ -591,10 +597,12 @@ pub(crate) fn save_as_named(app: &mut SolveApp, name: &str, extension: &str) {
     let name = format!("{name}.{extension}");
     app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         // A save under way answers a closing tab when it ends.
-        if let Some(path) = path
-            && crate::save_job::start(app, "file.save_as", json!({"path": path}))
-        {
-            return;
+        // A design saved as a design carries its preview, so the Designs panel shows it.
+        if let Some(path) = path {
+            let cache = path.ends_with(solidcraft_engine::io::DESIGN_EXT);
+            if crate::save_job::start(app, "file.save_as", json!({ "path": path, "cache": cache })) {
+                return;
+            }
         }
         crate::documents::saved_for_close(app);
     });

@@ -152,6 +152,8 @@ const ALLOWED_LITERALS: &[(&str, usize, &str)] = &[
         "the custom view navigator's raster: the design's appearance and tokens, shaded, as pixels, drawn with the white image tint",
     ),
     ("context_menu.rs", 1, "the radial menu's shadow"),
+    ("designs_panel.rs", 1, "the white tint that shows a design thumbnail image unchanged"),
+    ("designs_properties.rs", 1, "the white tint that shows a project thumbnail image unchanged"),
     ("dialogs_appearance.rs", 1, "a design appearance: the colour is the fact"),
     ("dialogs_save_mesh.rs", 1, "an installed slicer's own icon, drawn untinted"),
     ("dialogs_library.rs", 1, "a library appearance's swatch: the colour is the fact"),
