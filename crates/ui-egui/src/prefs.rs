@@ -1583,6 +1583,8 @@ preference_settings! {
     /// Use the repositories: the panel and its app bar button, and Save As starts in the folder
     /// the panel shows. Off, SolidCraft saves where the picker last was, as before.
     repositories_panel: bool = true, PAGE_REPOSITORIES;
+    /// How wide the Designs panel is (dragged by its edge).
+    designs_width: f32 = 280.0, PAGE_REPOSITORIES;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
@@ -2223,6 +2225,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             app.preferences.repositories = Repository::suggested();
             app.preferences.active_repository.clear();
             app.preferences.repositories_panel = true;
+            app.preferences.designs_width = Prefs::default().designs_width;
         }
         _ => {}
     }
@@ -4111,6 +4114,9 @@ fn prepare_preferences(
     }
     if !accepted::dimension_step_mm(&new) || !accepted::dimension_step_deg(&new) {
         return Err("`dimension_step_mm` must be 0.001…1000 and `dimension_step_deg` 0.001…180".into());
+    }
+    if !(crate::designs_panel::WIDTH_MIN..=crate::designs_panel::WIDTH_MAX).contains(&new.designs_width) {
+        return Err(format!("`designs_width` must be {}…{}", crate::designs_panel::WIDTH_MIN, crate::designs_panel::WIDTH_MAX));
     }
     if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
         return Err("`display_quality` must be coarse, normal, fine or ultra".into());
