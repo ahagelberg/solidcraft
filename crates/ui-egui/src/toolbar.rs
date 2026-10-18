@@ -583,6 +583,11 @@ pub(crate) fn save_copy(app: &mut SolveApp) {
 
 /// Save As offers the open file's own name, not the name stored in the design (#8329).
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
+    // With repositories on, Save As is the repository's own dialog: it can only write inside the
+    // repository, starting at the folder the panel shows.
+    if crate::designs_save::open(app, extension != solidcraft_engine::io::DESIGN_EXT) {
+        return;
+    }
     let name = app.session.save_as_name();
     save_as_named(app, &name, extension);
 }
@@ -2818,7 +2823,7 @@ mod header_report_tests {
         h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
         let dir = h.dir.clone();
         h.app.services.pick_save =
-            Some(Box::new(move |name, _extensions, _folder| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+            Some(Box::new(move |name, _extensions| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();
