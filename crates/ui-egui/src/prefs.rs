@@ -1912,6 +1912,8 @@ preference_settings! {
     /// Use the repositories: the panel and its app bar button, and Save As starts in the folder
     /// the panel shows. Off, SolidCraft saves where the picker last was, as before.
     repositories_panel: bool = true, PAGE_REPOSITORIES;
+    /// How wide the Designs panel is (dragged by its edge).
+    designs_width: f32 = 280.0, PAGE_REPOSITORIES;
 }
 
 /// What a middle-button double-click in the view does.
@@ -4513,6 +4515,9 @@ fn prepare_preferences(
     }
     if !new.active_repository.is_empty() && !new.repositories.iter().any(|r| r.id == new.active_repository) {
         return Err("`active_repository` must be the id of one of the `repositories`".into());
+    }
+    if !(crate::designs_panel::WIDTH_MIN..=crate::designs_panel::WIDTH_MAX).contains(&new.designs_width) {
+        return Err(format!("`designs_width` must be {}…{}", crate::designs_panel::WIDTH_MIN, crate::designs_panel::WIDTH_MAX));
     }
     migrate_gruvbox(&mut new);
     if let Some(update) = p.get("theme_options") {
