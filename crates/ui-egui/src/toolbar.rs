@@ -602,8 +602,18 @@ pub fn save(app: &mut SolveApp) {
         app.tree.capture_prompt = Some(crate::browser::SAVE.into());
         return;
     }
+    // A design opened from an older version loses the versions after it: ask first.
+    if let Some(prompt) = crate::designs_versions::save_prompt(app) {
+        app.version_prompt = Some(prompt);
+        return;
+    }
+    let discard_later = std::mem::take(&mut app.save_discards_later);
     if app.session.path.is_some() {
-        let _ = app.run("file.save", json!({"cache": true}));
+        let mut params = json!({"cache": true});
+        if discard_later {
+            params["discard_later_versions"] = json!(true);
+        }
+        let _ = app.run("file.save", params);
     } else {
         save_as(app);
     }

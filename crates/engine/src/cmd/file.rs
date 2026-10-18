@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -33,7 +33,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("save")
         .key("Ctrl+S")
         .noundo()
-        .params("path? (default: current file); format?: container|json (default: json for .json, otherwise container); compression?: fast|compact (default: fast); cache?: bool (warm native geometry, default: false); preview?: bool (saved display meshes, default: false)"),
+        .params("path? (default: current file); format?: container|json (default: json for .json, otherwise container); compression?: fast|compact (default: fast); cache?: bool (warm native geometry, default: false); preview?: bool (saved display meshes, default: false); discard_later_versions?: bool (default: false: saving a design opened from an older version is refused, since it deletes the versions after it)"),
     CommandSpec::new("file.save_as", "Save As", save_as)
         .icon("save")
         .noundo()
@@ -229,6 +229,16 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_gltf_path(path) && p.get("up").is_some_and(|v| !v.is_null()) {
         return Err(bad("doc.open", "`up` applies to STEP, IGES and glTF files only"));
     }
+    let version = match p.get("version") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            u32::try_from(v.as_u64().ok_or_else(|| bad("doc.open", "`version` must be a whole number"))?)
+                .map_err(|_| bad("doc.open", "`version` is too large"))?,
+        ),
+    };
+    if version.is_some() && (solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path)) {
+        return Err(bad("doc.open", "`version` applies to designs only"));
+    }
     if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
@@ -254,14 +264,25 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(out);
     }
-    let mut doc = solidcraft_io::read_design_file(path, s.open_preview.take()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let mut doc = match version {
+        Some(version) => {
+            let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            solidcraft_io::read_design_version(&bytes, version).map_err(|e| EngineError::Other(format!("{path}: {e}")))?
+        }
+        None => solidcraft_io::read_design_file(path, s.open_preview.take()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?,
+    };
     if let Some(stem) = default_name_for(&doc.name, path) {
         doc.name = stem;
     }
+    let versions = solidcraft_io::container_versions_file(std::path::Path::new(path)).map(|v| v.current).unwrap_or(1);
     s.replace_design(Session::new(doc));
     s.path = Some(path.to_string());
+    s.version = version.filter(|v| *v < versions);
+    s.versions = versions;
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
-    Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name}))
+    Ok(
+        json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name, "version": s.version.unwrap_or(versions), "versions": versions}),
+    )
 }
 
 /// The name a design never given one by its user is shown under.
@@ -302,7 +323,7 @@ fn rename_design(s: &mut Session, from: &str, to: &str) {
     }
 }
 
-fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
+fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool, discard_later: bool) -> Result<Value> {
     solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     // Saving an unnamed design, or one named after the file it was saved as, names it after its
     // file (not an undoable edit).
@@ -310,7 +331,7 @@ fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: 
     if let Some((from, to)) = &renamed {
         rename_design(s, from, to);
     }
-    let r = write_file(s, path, format, compression, preview, cache);
+    let r = write_file(s, path, format, compression, preview, cache, discard_later);
     if r.is_err()
         && let Some((from, to)) = &renamed
     {
@@ -319,7 +340,7 @@ fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: 
     r
 }
 
-fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
+fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool, discard_later: bool) -> Result<Value> {
     let compression = match compression {
         "fast" => solidcraft_io::DesignCompression::Fast,
         "compact" => solidcraft_io::DesignCompression::Compact,
@@ -328,7 +349,7 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
     // Linked designs are kept relative to the folder the design is saved in.
     let links = super::component_link::rebased(&s.doc, s.path.as_deref(), path);
     let old_links = (links != s.doc.links).then(|| std::mem::replace(&mut s.doc_mut().links, links));
-    let r = write_bytes(s, path, format, compression, preview, cache);
+    let r = write_bytes(s, path, format, compression, preview, cache, discard_later);
     if r.is_err()
         && let Some(old) = old_links
     {
@@ -344,17 +365,70 @@ fn write_bytes(
     compression: solidcraft_io::DesignCompression,
     preview: bool,
     cache: bool,
+    discard_later: bool,
 ) -> Result<Value> {
-    let bytes = match format {
-        "container" => s.design_container(compression, preview, cache)?,
-        "json" => solidcraft_io::write_design(&s.design()),
+    // Saving the design over its own file makes the new version and keeps the old ones; a save
+    // under another name starts a new file. Only a container has versions.
+    let previous = if s.path.as_deref() == Some(path) {
+        solidcraft_io::vfs::read(path, solidcraft_io::MAX_DESIGN_BYTES).ok().filter(|bytes| solidcraft_io::is_design_container(bytes))
+    } else {
+        None
+    };
+    let base = if s.path.as_deref() == Some(path) { s.version } else { None };
+    let written = match format {
+        "container" => {
+            let geometry = cache.then(|| saved_geometry(s)).flatten();
+            let preview = preview.then(|| saved_preview(s)).flatten();
+            let thumbnail = cache.then(|| thumbnail::saved(s)).flatten();
+            match previous.as_deref() {
+                Some(previous) => {
+                    let on_disk = solidcraft_io::container_versions(previous).current;
+                    if let Some(base) = base.filter(|b| *b < on_disk)
+                        && !discard_later
+                    {
+                        return Err(bad(
+                            "file.save",
+                            format!(
+                                "saving this design would delete versions {}…{} of it: pass `discard_later_versions: true`",
+                                base.saturating_add(1),
+                                on_disk
+                            ),
+                        ));
+                    }
+                    let (bytes, version) = solidcraft_io::write_design_container_versioned(
+                        &s.design(),
+                        compression,
+                        preview.as_ref(),
+                        geometry.as_deref(),
+                        thumbnail.as_deref(),
+                        Some(previous),
+                        base,
+                    )?;
+                    (bytes, Some(version))
+                }
+                None => (
+                    solidcraft_io::write_design_container_with_thumbnail(
+                        &s.design(),
+                        compression,
+                        preview.as_ref(),
+                        geometry.as_deref(),
+                        thumbnail.as_deref(),
+                    )?,
+                    Some(1),
+                ),
+            }
+        }
+        "json" => (solidcraft_io::write_design(&s.design()), None),
         _ => return Err(bad("file.save", "format must be container or json")),
     };
+    let (bytes, version) = written;
     // Atomic, keeping the version being replaced as `<file>.bak`.
     solidcraft_io::write_atomic(std::path::Path::new(path), &bytes, true).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     s.path = Some(path.to_string());
+    s.version = None;
+    s.versions = version.unwrap_or(0);
     s.mark_saved();
-    Ok(json!({"path": path, "bytes": bytes.len(), "name": s.doc.name}))
+    Ok(json!({"path": path, "bytes": bytes.len(), "name": s.doc.name, "version": version, "versions": version}))
 }
 
 impl Session {
@@ -422,6 +496,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         str_(p, "compression").unwrap_or("fast"),
         bool_(p, "preview").unwrap_or(false),
         bool_(p, "cache").unwrap_or(false),
+        bool_(p, "discard_later_versions").unwrap_or(false),
     )
 }
 
@@ -438,6 +513,7 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
         str_(p, "compression").unwrap_or("fast"),
         bool_(p, "preview").unwrap_or(false),
         bool_(p, "cache").unwrap_or(false),
+        bool_(p, "discard_later_versions").unwrap_or(false),
     )
 }
 
@@ -662,6 +738,50 @@ mod tests {
             reads[4],
             bytes.len()
         );
+    }
+
+    #[test]
+    fn saving_keeps_versions_and_an_old_one_needs_permission_to_replace_the_later_ones() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-versions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("part.solidcraft");
+        let path_text = path.to_string_lossy().into_owned();
+
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+        let first = s.execute("file.save_as", &json!({"path":path_text})).unwrap();
+        assert_eq!(first["version"], json!(1));
+        // A second save keeps the first as version 1.
+        s.execute("solid.box", &json!({"length":20,"width":10,"height":10})).unwrap();
+        let second = s.execute("file.save", &json!({})).unwrap();
+        assert_eq!(second["version"], json!(2));
+        assert_eq!(s.versions, 2);
+        let on_disk = solidcraft_io::container_versions(&std::fs::read(&path).unwrap()).current;
+        assert_eq!(on_disk, 2);
+
+        // Opening version 1 says so, and saving it would delete version 2: refused until asked.
+        s.execute("doc.open", &json!({"path":path_text,"version":1})).unwrap();
+        assert_eq!(s.version, Some(1));
+        assert_eq!(s.versions, 2);
+        let refused = s.execute("file.save", &json!({})).unwrap_err().to_string();
+        assert!(refused.contains("discard_later_versions"), "{refused}");
+        assert_eq!(solidcraft_io::container_versions(&std::fs::read(&path).unwrap()).current, 2, "a refused save changed the file");
+        let saved = s.execute("file.save", &json!({"discard_later_versions":true})).unwrap();
+        assert_eq!(saved["version"], json!(2), "the edited version 1 becomes the new version 2");
+        assert_eq!(s.version, None);
+        assert_eq!(solidcraft_io::container_versions(&std::fs::read(&path).unwrap()).current, 2);
+
+        // Its body count says which design is at the root: the edited version 1 (one body).
+        let mut reopened = Session::default();
+        let opened = reopened.execute("doc.open", &json!({"path":path_text})).unwrap();
+        assert_eq!(opened["versions"], json!(2));
+        assert_eq!(reopened.world_state().bodies.len(), 1);
+        let older = reopened.execute("doc.open", &json!({"path":path_text,"version":1})).unwrap();
+        assert_eq!(older["version"], json!(1));
+        assert_eq!(reopened.world_state().bodies.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

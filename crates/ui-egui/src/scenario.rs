@@ -413,7 +413,11 @@ impl Harness {
                 };
                 let [x, y] = found.ok_or_else(|| format!("no widget `{text}` on screen"))?;
                 self.call("ui.move", json!({"x": x, "y": y}));
-                self.call("ui.click", json!({"x": x, "y": y}))
+                let mut p = json!({"x": x, "y": y, "double": flag("double")});
+                if let Some(b) = s.get("button") {
+                    p["button"] = b.clone();
+                }
+                self.call("ui.click", p)
             } else if let Some(at) = s.get("hold") {
                 // Press and hold still (Select Other): `frames` with the button down (default 40,
                 // about 0.67 s), then let go.

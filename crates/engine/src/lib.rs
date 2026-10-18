@@ -213,6 +213,11 @@ pub struct Session {
     pub active_sketch: Option<u64>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
+    /// The version of the file this design was opened from (`None`: its current version, or a
+    /// design never saved). Saving it replaces the versions after this one.
+    pub version: Option<u32>,
+    /// How many versions the file has (the current one's number), as last read or written.
+    pub versions: u32,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
     /// Interactive loaders may show it provisionally; it never becomes model state.
     pub open_preview: Option<Box<dyn Fn(solidcraft_io::DesignPreview) + Send + Sync>>,
@@ -360,6 +365,8 @@ impl Session {
             active_sketch: None,
             selection: Vec::new(),
             path: None,
+            version: None,
+            versions: 0,
             open_preview: None,
             log: Vec::new(),
             revision: 1,
@@ -827,6 +834,8 @@ impl Session {
             active_sketch: self.active_sketch,
             selection: self.selection.clone(),
             path: None,
+            version: self.version,
+            versions: self.versions,
             open_preview: None,
             saved: self.saved.clone(),
             log: Vec::new(),

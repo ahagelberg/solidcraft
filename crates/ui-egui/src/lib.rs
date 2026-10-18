@@ -27,6 +27,7 @@ pub mod designs_panel;
 pub mod designs_properties;
 pub mod designs_repositories;
 pub mod designs_save;
+pub mod designs_versions;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
@@ -420,6 +421,10 @@ pub struct SolveApp {
     pub designs: designs_panel::State,
     /// The repository's own Save As window, when it is open.
     pub save_to_repo: Option<designs_save::Dialog>,
+    /// A version question waiting for its answer (opening an old version, saving over later ones).
+    pub version_prompt: Option<designs_versions::Prompt>,
+    /// The user agreed to delete the versions after the one being saved.
+    pub save_discards_later: bool,
     pub home: home::HomeState,
     pub file_load: file_load::FileLoad,
     /// The other open designs (tabs).
@@ -512,6 +517,8 @@ impl SolveApp {
             flat_view: Default::default(),
             designs: designs_panel::State::default(),
             save_to_repo: None,
+            version_prompt: None,
+            save_discards_later: false,
             home: home::HomeState::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
@@ -1040,6 +1047,12 @@ impl SolveApp {
     pub fn open_path_async(&mut self, path: &str) {
         file_load::begin(self, path, false);
     }
+    /// Open one of a design's older versions (the caller asked the user first).
+    pub fn open_version_async(&mut self, path: &str, version: u32) {
+        let mut request = file_load::Request::new(path, file_load::Kind::Open);
+        request.options.insert("version".into(), json!(version));
+        let _ = file_load::begin_request(self, request);
+    }
     pub fn insert_path_async(&mut self, path: &str) {
         file_load::begin(self, path, true);
     }
@@ -1396,6 +1409,7 @@ impl SolveApp {
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         designs_save::show(self, ui.ctx());
+        designs_versions::show(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
         // The Designs panel is on the start page too: it is how designs and importable files
