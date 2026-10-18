@@ -715,6 +715,13 @@ impl SolveApp {
                         designs_panel::invalidate(self, &p);
                     }
                 }
+                // A file written next to the designs (an export, a mesh) is a row now: the
+                // panel lists the formats SolidCraft imports.
+                if matches!(id, "file.export" | "file.save_mesh")
+                    && let Some(p) = v.get("path").and_then(Value::as_str)
+                {
+                    designs_panel::invalidate(self, p);
+                }
             }
             Err(e) => {
                 let msg = friendly_error(id, e);
@@ -1388,7 +1395,12 @@ impl SolveApp {
         documents::prompt(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
+        // The Designs panel is on the start page too: it is how designs and importable files
+        // are found in the first place.
+        let mut designs_shown = false;
         if self.home.open {
+            designs_panel::show(self, ui);
+            designs_shown = true;
             home::show(self, ui);
             if self.home.open {
                 // Preferences and Keyboard Shortcuts open from Home too (its links, the gear, Ctrl+,).
@@ -1403,7 +1415,9 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        designs_panel::show(self, ui);
+        if !designs_shown {
+            designs_panel::show(self, ui);
+        }
         if self.ui.show_browser {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);

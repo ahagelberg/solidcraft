@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("folder")
         .noundo()
         .doc_only()
-        .params("path: an absolute folder -> {path, folders: [{name, path, description, has_thumbnail}], designs: [{name, path, modified}], truncated}; at most 2000 entries"),
+        .params("path: an absolute folder -> {path, folders: [{name, path, description, has_thumbnail}], designs: [{name, path, modified, kind}], truncated}; at most 2000 entries. `designs` lists the designs and the files SolidCraft can import (`kind`: `design`, or `step` for STEP, IGES, FreeCAD and Rhino, `mesh` for 3MF, STL, OBJ and glTF)"),
     CommandSpec::new("designs.folder_new", "New Folder", folder_new)
         .icon("new")
         .noundo()
@@ -95,10 +95,12 @@ fn list_at(root: &Path) -> Result<Value> {
                 "description": project.description,
                 "has_thumbnail": solidcraft_io::project::has_thumbnail(&path),
             }));
-        } else if meta.is_file() && is_design_file(&path) {
+        } else if meta.is_file()
+            && let Some(kind) = file_kind(path.to_string_lossy().as_ref())
+        {
             let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&name).to_string();
-            designs.push(json!({ "name": stem, "path": path.to_string_lossy(), "modified": modified }));
+            designs.push(json!({ "name": stem, "path": path.to_string_lossy(), "modified": modified, "kind": kind }));
         }
     }
     folders.sort_by(|a, b| natural_cmp(a["name"].as_str().unwrap_or(""), b["name"].as_str().unwrap_or("")));
@@ -141,15 +143,17 @@ fn rename(_s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut name = checked_name(str_(p, "name").unwrap_or_default(), cmd)?;
     if meta.is_file() {
-        if !is_design_file(&path) {
-            return Err(bad(cmd, "only design files can be renamed here"));
+        let text = path.to_string_lossy();
+        if file_kind(text.as_ref()).is_none() {
+            return Err(bad(cmd, "only designs and the files SolidCraft can import can be renamed here"));
         }
-        if !name_has_design_extension(&name) {
-            let extension = path.extension().and_then(|e| e.to_str()).unwrap_or(solidcraft_io::DESIGN_EXT);
+        // The name typed is the stem: a design keeps its `kind`'s extension.
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or(solidcraft_io::DESIGN_EXT);
+        if !name_has_design_extension(&name) && !name.ends_with(&format!(".{extension}")) {
             name = format!("{name}.{extension}");
         }
     } else if !meta.is_dir() {
-        return Err(bad(cmd, "only designs and folders can be renamed"));
+        return Err(bad(cmd, "only designs, importable files and folders can be renamed"));
     }
     let target = parent.join(&name);
     if target == path {
@@ -217,12 +221,13 @@ fn delete(_s: &mut Session, p: &Value) -> Result<Value> {
         }
         std::fs::remove_dir(&path).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))?;
     } else if meta.is_file() {
-        if !is_design_file(&path) {
-            return Err(bad(cmd, "only design files can be deleted here"));
+        let text = path.to_string_lossy();
+        if file_kind(text.as_ref()).is_none() {
+            return Err(bad(cmd, "only designs and the files SolidCraft can import can be deleted here"));
         }
         std::fs::remove_file(&path).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))?;
     } else {
-        return Err(bad(cmd, "only design files and folders can be deleted"));
+        return Err(bad(cmd, "only files and folders can be deleted"));
     }
     Ok(json!({ "deleted": path.to_string_lossy() }))
 }
@@ -345,6 +350,21 @@ fn is_design_file(path: &Path) -> bool {
         .is_some_and(|e| solidcraft_io::DESIGN_EXTS.iter().any(|x| e.eq_ignore_ascii_case(x)) || e.eq_ignore_ascii_case("json"))
 }
 
+/// What a listed file is (`design`), or which importer opens it: `step` for STEP, IGES, FreeCAD
+/// and Rhino (`file.insert_step`), `mesh` for 3MF, STL, OBJ and glTF (`file.insert_mesh`). `None`:
+/// SolidCraft can't open it, so it is not listed.
+fn file_kind(path: &str) -> Option<&'static str> {
+    if is_design_file(Path::new(path)) {
+        Some("design")
+    } else if solidcraft_io::is_step_path(path) {
+        Some("step")
+    } else if solidcraft_io::is_mesh_path(path) {
+        Some("mesh")
+    } else {
+        None
+    }
+}
+
 fn name_has_design_extension(name: &str) -> bool {
     Path::new(name)
         .extension()
@@ -441,6 +461,44 @@ mod tests {
     }
 
     #[test]
+    fn listing_includes_the_files_solidcraft_can_import_and_says_what_they_are() {
+        let d = temp("kinds");
+        for file in [
+            "plate.solidcraft",
+            "bracket.STEP",
+            "import.stp",
+            "iges.igs",
+            "freecad.fcstd",
+            "mesh.stl",
+            "part.OBJ",
+            "print.3mf",
+            "gltf.glb",
+            "notes.txt",
+            "sheet.pdf",
+        ] {
+            std::fs::write(d.join(file), b"x").unwrap();
+        }
+        let v = listed(&d);
+        let rows: Vec<(String, String)> = v["designs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["name"].as_str().unwrap().to_string(), e["kind"].as_str().unwrap().to_string()))
+            .collect();
+        let kind = |name: &str| rows.iter().find(|(n, _)| n == name).map(|(_, k)| k.as_str()).unwrap_or("missing");
+        assert_eq!(kind("plate"), "design");
+        for step in ["bracket", "import", "iges", "freecad"] {
+            assert_eq!(kind(step), "step", "{step}");
+        }
+        for mesh in ["mesh", "part", "print", "gltf"] {
+            assert_eq!(kind(mesh), "mesh", "{mesh}");
+        }
+        // Files SolidCraft cannot open are not listed.
+        assert!(!rows.iter().any(|(n, _)| n == "notes" || n == "sheet"), "{rows:?}");
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
     fn folder_names_are_checked() {
         let d = temp("names");
         for name in ["a/b", "CON", "x.", "..", "", "a:b"] {
@@ -467,6 +525,20 @@ mod tests {
         let bracket = d.join("bracket.solidcraft");
         assert!(rename(&mut s, &json!({ "path": bracket.to_string_lossy(), "name": "taken.solidcraft" })).is_err());
         assert!(bracket.is_file());
+        // An importable file keeps its own extension (a STEP stays a STEP), and is renamed and
+        // deleted like a design; a file SolidCraft cannot open is refused.
+        let step = d.join("bracket.step");
+        std::fs::write(&step, b"x").unwrap();
+        let renamed = rename(&mut s, &json!({ "path": step.to_string_lossy(), "name": "dish" })).unwrap();
+        assert_eq!(renamed["path"], json!(d.join("dish.step").to_string_lossy()));
+        assert!(d.join("dish.step").is_file() && !step.exists());
+        delete(&mut s, &json!({ "path": d.join("dish.step").to_string_lossy() })).unwrap();
+        assert!(!d.join("dish.step").exists());
+        let notes = d.join("notes.txt");
+        std::fs::write(&notes, b"x").unwrap();
+        assert!(rename(&mut s, &json!({ "path": notes.to_string_lossy(), "name": "memo" })).is_err());
+        assert!(delete(&mut s, &json!({ "path": notes.to_string_lossy() })).is_err());
+        assert!(notes.is_file(), "a file SolidCraft cannot open was touched");
         std::fs::remove_dir_all(d).unwrap();
     }
 
