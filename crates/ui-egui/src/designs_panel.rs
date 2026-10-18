@@ -541,7 +541,7 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         let mut path = root.clone();
         for part in &relative {
-            ui.label(RichText::new("/").size(11.5).color(crate::theme::Tokens::get().text_dim));
+            ui.label(RichText::new(">").size(11.5).color(crate::theme::Tokens::get().text_dim));
             path.push(part);
             if ui.link(RichText::new(part).size(11.5)).clicked() {
                 target = Some(path.clone());
