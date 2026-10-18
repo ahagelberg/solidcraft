@@ -135,7 +135,7 @@ enum Action {
 
 /// Draw the panel (and handle a design dropped from it, even while the panel is hidden).
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
-    if !app.services.designs_panel {
+    if !app.services.designs_panel || !app.preferences.repositories_panel {
         return;
     }
     accept_drag(app, ui.ctx());
@@ -152,11 +152,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             repository_header(app, ui, &t);
             ui.add_space(4.0);
-            // The path back out of a subfolder; at the repository root there is nothing to say
-            // (the selector above already names it).
-            if breadcrumb(app, ui) {
-                ui.add_space(4.0);
-            }
+            breadcrumb(app, ui);
+            ui.add_space(4.0);
             actions(app, ui);
             ui.separator();
             rows(app, ui, &t);
@@ -409,11 +406,9 @@ fn repository_header(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-/// The folders between the repository and the one shown, as links: nothing at the root, where the
-/// selector already names the repository. Whether it drew anything.
-fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
-    let Some(current) = app.designs.current.clone() else { return false };
-    let Some(repository) = active_repository(app) else { return false };
+fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let Some(current) = app.designs.current.clone() else { return };
+    let Some(repository) = active_repository(app) else { return };
     let root = PathBuf::from(&repository.path);
     let root_name = repository.name.clone();
     let relative: Vec<String> = current
@@ -427,9 +422,6 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                 .collect()
         })
         .unwrap_or_default();
-    if relative.is_empty() {
-        return false;
-    }
     let mut target = None;
     ui.horizontal_wrapped(|ui| {
         let root_link = ui.link(RichText::new(root_name).size(11.5));
@@ -449,7 +441,6 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     if let Some(target) = target {
         navigate(app, target);
     }
-    true
 }
 
 fn navigate(app: &mut SolveApp, path: PathBuf) {
@@ -832,6 +823,21 @@ pub fn app_bar_button(app: &mut SolveApp, ui: &mut egui::Ui, bar: egui::Rect, x:
     };
     crate::icons::paint_on(ui.painter(), rect.shrink(5.0), "grid", Some(true), opacity);
     idle && response.on_hover_text(crate::i18n::tr("designs.title")).clicked()
+}
+
+/// Where Save As starts: the folder the panel shows, when it is inside the active repository (and
+/// still there), else the repository itself. `None`: repositories are off (or the host has no
+/// panel), so the picker starts wherever the host left it.
+pub fn save_folder(app: &SolveApp) -> Option<String> {
+    if !app.preferences.repositories_panel || !app.services.designs_panel {
+        return None;
+    }
+    let root = PathBuf::from(&active_repository(app)?.path);
+    if !root.is_dir() {
+        return None;
+    }
+    let shown = app.designs.current.as_ref().filter(|shown| shown.starts_with(&root) && shown.is_dir());
+    Some(shown.unwrap_or(&root).to_string_lossy().into_owned())
 }
 
 /// A file or folder dropped on the window: a design becomes a component of the open design.
