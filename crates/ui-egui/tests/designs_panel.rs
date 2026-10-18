@@ -25,6 +25,37 @@ fn listing(h: &Harness) -> Vec<String> {
 }
 
 #[test]
+fn a_repository_folder_that_cannot_be_made_is_reported_not_spun_on() {
+    let mut h = Harness::new();
+    h.app.services.designs_panel = true;
+    // `blocker` is a file, so `blocker/child` can never be made.
+    std::fs::write(h.dir.join("blocker"), b"not a folder").unwrap();
+    let blocked = h.dir.join("blocker/child");
+    h.app.preferences.repositories =
+        vec![Repository { id: "test".into(), name: "Test".into(), description: String::new(), path: blocked.to_string_lossy().into_owned() }];
+    h.app.preferences.active_repository = "test".into();
+    h.frames(8);
+
+    // The panel says the folder is not available, with the reason, and is not waiting on it.
+    h.run(&json!([
+        { "expect": { "count": { "name": "designs:unavailable", "value": 1 } } },
+        { "expect": { "count": { "name": "designs:loading", "value": 0 } } }
+    ]))
+    .unwrap();
+    assert!(!blocked.exists(), "{} was made after all", blocked.display());
+
+    // Try Again once the way is clear makes the folder and lists it.
+    std::fs::remove_file(h.dir.join("blocker")).unwrap();
+    h.run(&json!([
+        { "widget": "Try Again" },
+        { "until": { "count": { "name": "designs:unavailable", "value": 0 } } },
+        { "expect": { "count": { "name": "designs:folders", "value": 0 } } }
+    ]))
+    .unwrap();
+    assert!(blocked.is_dir(), "Try Again did not make {}: {:?}", blocked.display(), listing(&h));
+}
+
+#[test]
 fn the_panel_lists_a_repository_and_makes_a_folder() {
     let mut h = panel();
     // The panel makes the repository folder when it opens, and lists it empty.

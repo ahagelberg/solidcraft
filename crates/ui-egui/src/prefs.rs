@@ -437,7 +437,7 @@ pub const PAGES: &[&str] = &[
     "Shortcuts",
     "Assistant",
     "Plugins",
-    "Designs",
+    "Repositories",
 ];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_APPEARANCE: usize = 1;
@@ -452,7 +452,7 @@ pub const PAGE_MOUSE3D: usize = 9;
 pub const PAGE_SHORTCUTS: usize = 10;
 pub const PAGE_ASSISTANT: usize = 11;
 pub const PAGE_PLUGINS: usize = 12;
-pub const PAGE_DESIGNS: usize = 13;
+pub const PAGE_REPOSITORIES: usize = 13;
 /// What Preferences accepts for `parameter_list_rows`: `parameters.complete` answers at most 200.
 pub const PARAMETER_LIST_ROWS: std::ops::RangeInclusive<u16> = 5..=200;
 const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
@@ -574,13 +574,13 @@ const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
         defaults: page_defaults::<PAGE_PLUGINS>,
     }),
     prefs_window::Page::Host(prefs_window::HostPage {
-        icon: ui_kit::Icon::Kit("grid"),
-        label: "designs.title",
+        icon: ui_kit::Icon::Kit("folder"),
+        label: "designs.repositories",
         group: None,
-        handle: "prefs:page:Designs",
+        handle: "prefs:page:Repositories",
         scroll: true,
-        draw: page_draw::<PAGE_DESIGNS>,
-        defaults: page_defaults::<PAGE_DESIGNS>,
+        draw: page_draw::<PAGE_REPOSITORIES>,
+        defaults: page_defaults::<PAGE_REPOSITORIES>,
     }),
 ];
 
@@ -1906,9 +1906,9 @@ preference_settings! {
     plugin_max_fuel: u64 = solidcraft_engine::plugin::HostLimits::default().max_fuel, PAGE_PLUGINS;
     plugin_max_memory_mib: usize = solidcraft_engine::plugin::HostLimits::default().max_memory_mib, PAGE_PLUGINS;
     /// The folders the Designs panel browses, and the id of the one shown last (empty: the first).
-    repositories: Vec<Repository> = Repository::suggested(), PAGE_DESIGNS;
+    repositories: Vec<Repository> = Repository::suggested(), PAGE_REPOSITORIES;
     /// The id of the repository shown last (empty: the first).
-    active_repository: String = String::new(), PAGE_DESIGNS;
+    active_repository: String = String::new(), PAGE_REPOSITORIES;
 }
 
 /// What a middle-button double-click in the view does.
@@ -3239,7 +3239,7 @@ fn draw_page(app: &mut SolveApp, ui: &mut egui::Ui, index: usize, t: &Tokens) {
         PAGE_NAVIGATION => navigation::show(app, ui, t),
         PAGE_GRAPHICS => graphics::show(app, ui),
         PAGE_SKETCH => sketch::show(app, ui),
-        PAGE_DESIGNS => crate::designs_repositories::page(app, ui),
+        PAGE_REPOSITORIES => crate::designs_repositories::page(app, ui),
         _ => {}
     }
 }
