@@ -555,8 +555,13 @@ fn services(cc: &eframe::CreationContext<'_>, folder: &DialogFolder) -> Services
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
         designs_panel: true,
-        pick_save: Some(Box::new(move |name: &str, exts: &[&str]| {
+        pick_save: Some(Box::new(move |name: &str, exts: &[&str], folder: Option<&str>| {
             let dialog = save_folder.start(parent.clone()).set_file_name(name);
+            // Save As starts in the repository folder when the Designs panel is on.
+            let dialog = match folder.filter(|f| !f.is_empty()) {
+                Some(folder) => dialog.set_directory(folder),
+                None => dialog,
+            };
             let dialog = if exts == [io::DESIGN_EXT, "json"] {
                 if name.ends_with(".json") {
                     dialog.add_filter("Plain JSON design", &["json"]).add_filter("SolidCraft container", &[io::DESIGN_EXT])
