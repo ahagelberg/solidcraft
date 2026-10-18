@@ -1321,6 +1321,9 @@ impl crate::SolveApp {
     /// The caller keeps the app bar, ribbon, existing
     /// viewport/navigation and late feature/system overlays in their normal flow.
     pub(crate) fn universal_workspace_ui(&mut self, ui: &mut egui::Ui) {
+        // The Designs panel sits left of the Browser; it takes its space before the render
+        // domain is measured, so the viewport, picking and the ribbon agree on what is left.
+        crate::designs_panel::show(self, ui);
         // Capture before either ribbon or bottom chrome consumes root layout.
         // Rendering and picking always share this full domain below the app bar.
         let render_domain = ui.available_rect_before_wrap();

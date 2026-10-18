@@ -211,7 +211,7 @@ fn clean_old_pictures() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn cached(key: &str) -> Option<egui::ColorImage> {
+pub(crate) fn cached(key: &str) -> Option<egui::ColorImage> {
     let path = cache_path(key)?;
     if std::fs::metadata(&path).ok()?.len() > 512 * 1024 {
         return None;
@@ -223,7 +223,7 @@ fn cached(key: &str) -> Option<egui::ColorImage> {
     Some(img)
 }
 
-fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
+pub(crate) fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
     if bytes.len() > 512 * 1024 {
         return None;
     }

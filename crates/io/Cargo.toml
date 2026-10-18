@@ -42,6 +42,8 @@ encoding_rs = { workspace = true }
 cadmpeg-core = { workspace = true }
 cadmpeg-ir = { workspace = true }
 cadmpeg-registry = { workspace = true }
+# Project metadata thumbnails: decode, scale and re-encode (png/jpeg/webp input, PNG output).
+image = { workspace = true, features = ["jpeg", "webp"] }
 
 # The model cache's key (build.rs).
 [build-dependencies]

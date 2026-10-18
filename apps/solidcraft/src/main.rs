@@ -657,6 +657,7 @@ fn services(cc: &eframe::CreationContext<'_>, folder: &DialogFolder) -> Services
     let program_parent = parent.clone();
     let file_parent = parent.clone();
     let (open_folder, file_folder, save_folder) = (folder.clone(), folder.clone(), folder.clone());
+    let folder_parent = parent.clone();
     Services {
         pick_open: Some(Box::new(move |first: &[&str]| {
             // The chooser that opens may not be the desktop's own (#10159).
@@ -702,6 +703,11 @@ fn services(cc: &eframe::CreationContext<'_>, folder: &DialogFolder) -> Services
             let future = dialog.pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
+        pick_folder: Some(Box::new(move || {
+            let future = folder_parent.clone().set_title("Choose a folder").pick_folder();
+            Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
+        })),
+        designs_panel: true,
         pick_save: Some(Box::new(move |name: &str, exts: &[&str]| {
             let dialog = save_folder.start(parent.clone()).set_file_name(name);
             let dialog = if exts == [io::DESIGN_EXT, "json"] {

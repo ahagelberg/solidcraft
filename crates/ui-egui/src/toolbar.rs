@@ -260,6 +260,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 handles: APP_BAR_HANDLES,
             };
             let out = app_bar::show(ui, &bar, r, content);
+            // The Designs panel, left of the File menu (the 3x3 grid).
+            if app.services.designs_panel && crate::designs_panel::app_bar_button(app, ui, r, out.file.left() - 30.0, idle) {
+                app.ui.show_designs = !app.ui.show_designs;
+            }
             app.plugin_menu.in_file_menu = out.plugins_in_file;
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("sc_file_menu_x"), out.file.left()));
             for action in &out.actions {
@@ -616,7 +620,12 @@ pub fn save(app: &mut SolveApp) {
     if app.session.path.is_some() {
         // Read-only, or changed on disk since it was opened: Save As, or a question, instead.
         if crate::open_elsewhere::check_save(app) {
-            crate::save_job::start(app, "file.save", provenance_params(app));
+            let mut params = provenance_params(app);
+            // A saved design carries its preview, so the Designs panel shows the part.
+            if let Some(object) = params.as_object_mut() {
+                object.insert("cache".into(), json!(true));
+            }
+            crate::save_job::start(app, "file.save", params);
         }
     } else {
         save_as(app);
@@ -659,6 +668,8 @@ pub(crate) fn save_as_named(app: &mut SolveApp, name: &str, extension: &str) {
                     params.remove("sign");
                     params.remove("signing_key");
                 }
+                // A design saved as a design carries its preview, so the Designs panel shows it.
+                params["cache"] = json!(path.ends_with(solidcraft_engine::io::DESIGN_EXT));
                 params["path"] = json!(path);
                 crate::save_job::start(app, "file.save_as", params)
             }

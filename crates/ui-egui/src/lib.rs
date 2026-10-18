@@ -35,6 +35,9 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod designs_panel;
+pub mod designs_properties;
+pub mod designs_repositories;
 mod dialog_descriptor;
 pub mod dialogs;
 pub mod dialogs_appearance;
@@ -119,6 +122,9 @@ mod kit_host_tests;
 mod length_input;
 mod linked_source;
 pub mod links;
+pub mod local_time;
+#[cfg(test)]
+mod loft_rails_dialog_tests;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
 #[cfg(test)]
@@ -399,6 +405,7 @@ pub struct UiState {
     pub ribbon_context: Option<String>,
     pub show_browser: bool,
     pub show_timeline: bool,
+    pub show_designs: bool,
     pub show_grid: bool,
     pub show_navigation_bar: bool,
     pub perspective: bool,
@@ -459,6 +466,7 @@ impl Default for UiState {
             ribbon_open: false,
             show_browser: true,
             show_timeline: true,
+            show_designs: true,
             show_grid: true,
             show_navigation_bar: true,
             perspective: false,
@@ -495,6 +503,11 @@ pub struct Services {
     pub pick_file: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a folder (a repository, a destination to move a design to); `None` without one.
+    pub pick_folder: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// The host shows the Designs panel (desktop). Its repository folders are created and read
+    /// only when it is on; tests and the browser leave it off.
+    pub designs_panel: bool,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
@@ -875,6 +888,8 @@ pub struct SolveApp {
     /// The sheet metal flat pattern's own pan and zoom.
     pub flat_view: dialogs_sheet::FlatView,
     /// The start page.
+    /// The Designs panel: its listing, thumbnails and open dialogs.
+    pub designs: designs_panel::State,
     pub home: home::HomeState,
     /// The 3D mouse: which device, its reading, and the calibration window.
     pub space_mouse: space_mouse::Input,
@@ -1081,6 +1096,7 @@ impl SolveApp {
             flat_view: Default::default(),
             embedded: false,
             embed_editor: false,
+            designs: designs_panel::State::default(),
             home: home::HomeState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
@@ -1261,6 +1277,7 @@ impl SolveApp {
             "grid": self.ui.show_grid,
             "navigation_bar": self.ui.show_navigation_bar,
             "tool_cursor": self.ui.tool_cursor,
+            "show_designs": self.ui.show_designs,
             "perspective": self.ui.perspective,
             "auto_ortho_faces": self.ui.auto_ortho_faces,
             "pick_bodies": self.ui.pick_bodies,
@@ -1323,6 +1340,9 @@ impl SolveApp {
         }
         if let Some(visible) = flag("tool_cursor") {
             self.ui.tool_cursor = visible;
+        }
+        if let Some(d) = flag("show_designs") {
+            self.ui.show_designs = d;
         }
         if let Some(p) = flag("perspective") {
             self.ui.perspective = p;
@@ -1812,6 +1832,7 @@ impl SolveApp {
                             None => self.tr("ui.design_saved").replace("{path}", &p),
                         };
                         self.set_status(saved, false);
+                        designs_panel::invalidate(self, &p);
                     }
                 }
             }
@@ -3140,10 +3161,16 @@ impl SolveApp {
 
     /// A dropped CAD, mesh, drawing or point cloud (PLY, XYZ, PTS) file joins a design that has
     /// features or point clouds; otherwise it opens. A dropped PNG or JPEG is a canvas to place,
-    /// not a design to open: it starts the Canvas tool with that image chosen (#13926).
+    /// not a design to open: it starts the Canvas tool with that image chosen (#13926). A dropped
+    /// design, or a folder, goes to the Designs panel: a design becomes a component of the open
+    /// design, a folder is refused with a message (Home opens files).
     pub fn drop_path(&mut self, path: &str) {
         if sketch_tools::is_canvas_image(path) {
             sketch_tools::start_image_placement(self, "canvas.insert", path.to_string());
+            return;
+        }
+        if std::path::Path::new(path).is_dir() || solidcraft_engine::io::is_design_path(path) {
+            crate::designs_panel::drop_path(self, path);
             return;
         }
         let import = solidcraft_engine::io::is_step_path(path)

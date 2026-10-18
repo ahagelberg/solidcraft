@@ -365,6 +365,63 @@ pub fn choose_nav_preset(prefs: &mut Prefs, preset: &NavPreset) {
         prefs.right_drag_orbits = orbits;
     }
 }
+/// A named folder of designs in the Designs panel (a repository, like a Fusion project hub).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Repository {
+    /// Stable id the panel's active selection refers to.
+    pub id: String,
+    /// The name shown in the panel and in Preferences.
+    pub name: String,
+    /// What the folder is for (empty: none).
+    pub description: String,
+    /// The folder, absolute; empty when the platform offers no home folder to suggest.
+    pub path: String,
+}
+
+impl Repository {
+    /// The repository a new install starts with: the user's Documents folder, named after them.
+    pub fn suggested() -> Vec<Repository> {
+        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: documents_folder() }]
+    }
+}
+
+/// The OS user name, for the first repository's name (`$USER`, `$USERNAME`, else the home folder).
+fn user_name() -> String {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    env("USER")
+        .or_else(|| env("USERNAME"))
+        .or_else(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                dirs::home_dir().and_then(|h| h.file_name().map(|n| n.to_string_lossy().into_owned()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        })
+        .unwrap_or_else(|| "Designs".into())
+}
+
+/// The system's Documents folder (XDG user dirs, the Windows Known Folder, `~/Documents`), falling
+/// back to the home folder. Never a hard-coded folder name.
+fn documents_folder() -> String {
+    // Tests and scenarios point this at a scratch folder: they must never create or list the
+    // user's real Documents folder.
+    if let Some(dir) = std::env::var_os("SOLIDCRAFT_DESIGNS_DIR").filter(|d| !d.is_empty()) {
+        return std::path::PathBuf::from(dir).to_string_lossy().into_owned();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        String::new()
+    }
+}
+
 /// Stable control-channel names; presentation labels may be shorter.
 pub const PAGES: &[&str] = &[
     "General",
@@ -380,6 +437,7 @@ pub const PAGES: &[&str] = &[
     "Shortcuts",
     "Assistant",
     "Plugins",
+    "Designs",
 ];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_APPEARANCE: usize = 1;
@@ -394,6 +452,7 @@ pub const PAGE_MOUSE3D: usize = 9;
 pub const PAGE_SHORTCUTS: usize = 10;
 pub const PAGE_ASSISTANT: usize = 11;
 pub const PAGE_PLUGINS: usize = 12;
+pub const PAGE_DESIGNS: usize = 13;
 /// What Preferences accepts for `parameter_list_rows`: `parameters.complete` answers at most 200.
 pub const PARAMETER_LIST_ROWS: std::ops::RangeInclusive<u16> = 5..=200;
 const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
@@ -513,6 +572,15 @@ const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
         scroll: true,
         draw: page_draw::<PAGE_PLUGINS>,
         defaults: page_defaults::<PAGE_PLUGINS>,
+    }),
+    prefs_window::Page::Host(prefs_window::HostPage {
+        icon: ui_kit::Icon::Kit("grid"),
+        label: "designs.title",
+        group: None,
+        handle: "prefs:page:Designs",
+        scroll: true,
+        draw: page_draw::<PAGE_DESIGNS>,
+        defaults: page_defaults::<PAGE_DESIGNS>,
     }),
 ];
 
@@ -1837,6 +1905,10 @@ preference_settings! {
     /// User ceilings, not automatic increases to a package's approved execution budget.
     plugin_max_fuel: u64 = solidcraft_engine::plugin::HostLimits::default().max_fuel, PAGE_PLUGINS;
     plugin_max_memory_mib: usize = solidcraft_engine::plugin::HostLimits::default().max_memory_mib, PAGE_PLUGINS;
+    /// The folders the Designs panel browses, and the id of the one shown last (empty: the first).
+    repositories: Vec<Repository> = Repository::suggested(), PAGE_DESIGNS;
+    /// The id of the repository shown last (empty: the first).
+    active_repository: String = String::new(), PAGE_DESIGNS;
 }
 
 /// What a middle-button double-click in the view does.
@@ -3167,6 +3239,7 @@ fn draw_page(app: &mut SolveApp, ui: &mut egui::Ui, index: usize, t: &Tokens) {
         PAGE_NAVIGATION => navigation::show(app, ui, t),
         PAGE_GRAPHICS => graphics::show(app, ui),
         PAGE_SKETCH => sketch::show(app, ui),
+        PAGE_DESIGNS => crate::designs_repositories::page(app, ui),
         _ => {}
     }
 }
@@ -4411,6 +4484,33 @@ fn prepare_preferences(
     }
     let mut new: Prefs = serde_json::from_value(cur).map_err(|e| e.to_string())?;
     new.retain_legacy_panel_fields(base);
+    // The Designs panel's repositories: unique ids and names, and real absolute folders.
+    if new.repositories.len() > 32 {
+        return Err("`repositories` must have at most 32 entries".into());
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    for repository in &new.repositories {
+        let name = repository.name.trim();
+        if repository.id.trim().is_empty() || !ids.insert(repository.id.as_str()) {
+            return Err("every repository needs a unique, non-empty `id`".into());
+        }
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err("every repository needs a `name` of 1 to 64 characters".into());
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(format!("repository names must be unique: `{name}` appears twice"));
+        }
+        if repository.description.chars().count() > 200 {
+            return Err("a repository `description` is longer than 200 characters".into());
+        }
+        if repository.path.len() > 4096 || (!repository.path.is_empty() && !std::path::Path::new(&repository.path).is_absolute()) {
+            return Err("a repository `path` must be empty or an absolute path of at most 4096 bytes".into());
+        }
+    }
+    if !new.active_repository.is_empty() && !new.repositories.iter().any(|r| r.id == new.active_repository) {
+        return Err("`active_repository` must be the id of one of the `repositories`".into());
+    }
     migrate_gruvbox(&mut new);
     if let Some(update) = p.get("theme_options") {
         merge_theme_options(&mut new, followed, update)?;
