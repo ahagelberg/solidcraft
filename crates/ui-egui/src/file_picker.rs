@@ -62,21 +62,10 @@ impl SolveApp {
     }
 
     pub(crate) fn pick_save(&mut self, name: &str, extensions: &[&str], complete: impl FnOnce(&mut SolveApp, Option<String>) + 'static) {
-        self.pick_save_in(None, name, extensions, complete);
-    }
-
-    /// Ask where to save, starting in `folder` (the repository Save As defaults to).
-    pub(crate) fn pick_save_in(
-        &mut self,
-        folder: Option<&str>,
-        name: &str,
-        extensions: &[&str],
-        complete: impl FnOnce(&mut SolveApp, Option<String>) + 'static,
-    ) {
         if self.file_picker_busy() {
             return;
         }
-        let future = self.services.pick_save.as_ref().map(|pick| pick(name, extensions, folder.filter(|f| !f.is_empty())));
+        let future = self.services.pick_save.as_ref().map(|pick| pick(name, extensions));
         self.begin_picker(future, Box::new(complete));
     }
 
@@ -182,7 +171,7 @@ mod tests {
         let answer = Rc::new(Answer::default());
         let captured = answer.clone();
         if save {
-            app.services.pick_save = Some(Box::new(move |_, _, _| Box::pin(Delayed(captured.clone()))));
+            app.services.pick_save = Some(Box::new(move |_, _| Box::pin(Delayed(captured.clone()))));
         } else {
             app.services.pick_open = Some(Box::new(move |_| Box::pin(Delayed(captured.clone()))));
         }

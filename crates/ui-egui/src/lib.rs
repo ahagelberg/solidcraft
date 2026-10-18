@@ -26,6 +26,7 @@ pub mod design_properties;
 pub mod designs_panel;
 pub mod designs_properties;
 pub mod designs_repositories;
+pub mod designs_save;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
@@ -272,9 +273,7 @@ pub struct Services {
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
-    /// Ask where to save (`name`, extensions, and the folder to start in: the Designs panel's
-    /// repository when it is on).
-    pub pick_save: Option<Box<dyn Fn(&str, &[&str], Option<&str>) -> FilePickerFuture>>,
+    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog for one file of a kind (its name, its extensions): on macOS a dialog allows
     /// only the types it names, so the agent chat's files need a dialog of their own. `None`: the
     /// Open dialog.
@@ -419,6 +418,8 @@ pub struct SolveApp {
     /// The start page.
     /// The Designs panel: its listing, thumbnails and open dialogs.
     pub designs: designs_panel::State,
+    /// The repository's own Save As window, when it is open.
+    pub save_to_repo: Option<designs_save::Dialog>,
     pub home: home::HomeState,
     pub file_load: file_load::FileLoad,
     /// The other open designs (tabs).
@@ -510,6 +511,7 @@ impl SolveApp {
             pending_fit: None,
             flat_view: Default::default(),
             designs: designs_panel::State::default(),
+            save_to_repo: None,
             home: home::HomeState::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
@@ -1393,6 +1395,7 @@ impl SolveApp {
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
+        designs_save::show(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
         // The Designs panel is on the start page too: it is how designs and importable files

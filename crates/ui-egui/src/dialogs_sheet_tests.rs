@@ -114,7 +114,7 @@ fn flat_exports_use_the_save_picker() {
     app.run("sheet.flange", json!({"sketch": "Base"})).unwrap();
     let picks = Arc::new(Mutex::new(Vec::new()));
     let captured = picks.clone();
-    app.services.pick_save = Some(Box::new(move |name, extensions, _folder| {
+    app.services.pick_save = Some(Box::new(move |name, extensions| {
         captured.lock().unwrap().push((name.to_string(), extensions.iter().map(|x| x.to_string()).collect::<Vec<_>>()));
         Box::pin(std::future::ready(None))
     }));
@@ -274,7 +274,7 @@ fn pocket_export_button_uses_the_picker_and_preserves_depth_layers() {
     }
     let path = h.dir.join("picked-pocket.dxf");
     let chosen = path.to_string_lossy().into_owned();
-    h.app.services.pick_save = Some(Box::new(move |name, extensions, _folder| {
+    h.app.services.pick_save = Some(Box::new(move |name, extensions| {
         assert!(name.ends_with("-Body1.dxf"));
         assert_eq!(extensions, &["dxf"]);
         Box::pin(std::future::ready(Some(chosen.clone())))
@@ -300,7 +300,7 @@ fn bend_table_picker_writes_the_current_body() {
     let path = std::env::temp_dir().join(format!("solidcraft-bend-table-{}.csv", std::process::id()));
     let output = path.to_string_lossy().into_owned();
     let chosen = output.clone();
-    app.services.pick_save = Some(Box::new(move |_, extensions, _folder| {
+    app.services.pick_save = Some(Box::new(move |_, extensions| {
         assert_eq!(extensions, &["csv"]);
         Box::pin(std::future::ready(Some(chosen.clone())))
     }));

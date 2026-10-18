@@ -892,17 +892,26 @@ pub fn app_bar_button(app: &mut SolveApp, ui: &mut egui::Ui, bar: egui::Rect, x:
     idle && response.on_hover_text(crate::i18n::tr("designs.title")).clicked()
 }
 
-/// Where Save As starts: the folder the panel shows, when it is inside the active repository (and
-/// still there), else the repository itself. `None`: repositories are off (or the host has no
-/// panel), so the picker starts wherever the host left it.
-pub fn save_folder(app: &SolveApp) -> Option<String> {
+/// The active repository's name, for the save dialog's breadcrumb.
+pub fn active_repository_name(app: &SolveApp) -> Option<String> {
+    Some(active_repository(app)?.name.clone())
+}
+
+/// The active repository's folder, when the repositories are on and it is there. Saves go inside
+/// it and nowhere else.
+pub fn repository_root(app: &SolveApp) -> Option<PathBuf> {
     if !app.preferences.repositories_panel || !app.services.designs_panel {
         return None;
     }
     let root = PathBuf::from(&active_repository(app)?.path);
-    if !root.is_dir() {
-        return None;
-    }
+    root.is_dir().then_some(root)
+}
+
+/// Where Save As starts: the folder the panel shows, when it is inside the active repository (and
+/// still there), else the repository itself. `None`: repositories are off (or the host has no
+/// panel), so the picker starts wherever the host left it.
+pub fn save_folder(app: &SolveApp) -> Option<String> {
+    let root = repository_root(app)?;
     let shown = app.designs.current.as_ref().filter(|shown| shown.starts_with(&root) && shown.is_dir());
     Some(shown.unwrap_or(&root).to_string_lossy().into_owned())
 }

@@ -25,7 +25,11 @@
   Files SolidCraft can import (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ and glTF) are listed
   beside the designs with the import icon: double-click one to open it as a new design, drag it
   into an open design to place it, or right-click it for the same menu (Insert, Rename, Move…,
-  Delete, Show in Folder) the designs have.
+  Delete, Show in Folder) the designs have. **Save** and **Save As** then use the repository's own
+  dialog instead of the system one: it opens on the folder the panel shows, walks the repository's
+  folders (and can make a new one), and cannot write anywhere outside the repository. A name
+  already taken asks before it replaces the file, and **Plain JSON** saves a `.json` design rather
+  than the container.
   Drag the panel's right edge to widen or narrow it; it reopens at that width. Click a row and
   press **F2** to rename that design or folder, with the whole name selected as a file browser
   does (elsewhere F2 renames what is selected in the design). Right-click a

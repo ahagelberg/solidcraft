@@ -516,7 +516,7 @@ mod web {
                                 Box::pin(std::future::ready(None))
                             })),
                             // Designs are kept in the browser; everything else is downloaded.
-                            pick_save: Some(Box::new(|name: &str, exts: &[&str], _folder: Option<&str>| {
+                            pick_save: Some(Box::new(|name: &str, exts: &[&str]| {
                                 let design = exts.contains(&solidcraft_engine::io::DESIGN_EXT);
                                 Box::pin(std::future::ready(Some(format!("{}{name}", if design { files::OPFS } else { files::DOWNLOADS }))))
                             })),
