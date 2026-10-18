@@ -496,6 +496,8 @@ pub struct Services {
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
+    /// Ask where to save (`name` and extensions): on macOS a dialog allows only the types it
+    /// names, so the agent chat's files need a dialog of their own.
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog for one file of a kind (its name, its extensions): on macOS a dialog allows
     /// only the types it names, so the agent chat's files need a dialog of their own. `None`: the

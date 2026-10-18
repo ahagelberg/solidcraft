@@ -261,7 +261,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             };
             let out = app_bar::show(ui, &bar, r, content);
             // The Designs panel, left of the File menu (the 3x3 grid).
-            if app.services.designs_panel && crate::designs_panel::app_bar_button(app, ui, r, out.file.left() - 30.0, idle) {
+            if app.services.designs_panel
+                && app.preferences.repositories_panel
+                && crate::designs_panel::app_bar_button(app, ui, r, out.file.left() - 30.0, idle)
+            {
                 app.ui.show_designs = !app.ui.show_designs;
             }
             app.plugin_menu.in_file_menu = out.plugins_in_file;
