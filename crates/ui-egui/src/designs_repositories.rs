@@ -1,4 +1,4 @@
-//! Preferences > Designs: the folders the Designs panel browses (repositories), edited inline.
+//! Preferences > Repositories: the folders the Designs panel browses, edited inline.
 
 use egui::{RichText, vec2};
 

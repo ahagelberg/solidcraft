@@ -34,10 +34,16 @@ pub struct State {
     thumbnails: HashMap<String, Option<egui::TextureHandle>>,
     thumb_rx: Option<Receiver<(String, Option<egui::ColorImage>)>>,
     error: Option<String>,
+    /// The folder the listing asked for (so a failure can be tied to it).
+    listing_path: Option<String>,
+    /// A folder that could not be made or listed: it is not retried until the user asks (or
+    /// goes to another folder), so its message stays on screen instead of a spinner.
+    failed: Option<String>,
     rename: Option<Rename>,
     new_folder: Option<String>,
     confirm: Option<Confirm>,
-    /// A repository whose missing folder was already created this session.
+    /// A repository whose missing folder was already attempted this session (by path, so a
+    /// corrected path is tried again).
     created: Option<String>,
     /// The row picked last.
     selected: Option<String>,
@@ -179,6 +185,7 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
         app.designs.thumbnails.clear();
         app.designs.selected = None;
         app.designs.error = None;
+        app.designs.failed = None;
     }
     if path.is_empty() {
         app.designs.current = None;
@@ -190,25 +197,43 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
     if !app.designs.current.as_ref().is_some_and(|current| current.starts_with(&path)) {
         app.designs.current = Some(path.clone());
         app.designs.entries = None;
+        app.designs.failed = None;
     }
-    if !path.is_dir() && app.designs.created.as_deref() != Some(id.as_str()) {
-        app.designs.created = Some(id);
-        // The default repository's folder is made the first time the panel opens.
-        let params = json!({ "path": path.to_string_lossy(), "parents": true });
-        if let Err(e) = app.session.execute("designs.folder_new", &params) {
-            app.designs.error = Some(e.to_string());
-            return;
+    let root = path.to_string_lossy().into_owned();
+    // A repository folder that is not there is made, with its parents, the first time the panel
+    // shows it (and again if the path is edited to another one).
+    if !path.is_dir() && app.designs.created.as_deref() != Some(root.as_str()) {
+        app.designs.created = Some(root.clone());
+        let params = json!({ "path": root, "parents": true });
+        match app.session.execute("designs.folder_new", &params) {
+            Ok(_) => {
+                app.designs.entries = None;
+                app.designs.error = None;
+                app.designs.failed = None;
+            }
+            Err(e) => {
+                // Reported as it is (not a spinner): the panel draws the message and a way to
+                // try again.
+                app.designs.error = Some(e.to_string());
+                app.designs.failed = Some(root);
+                app.designs.entries = None;
+                return;
+            }
         }
-        app.designs.entries = None;
-        app.designs.error = None;
     }
     let focused = ctx.input(|i| i.focused);
     if focused && !app.designs.focused {
         app.designs.entries = None;
+        // Back in the window: a folder that failed may have been fixed meanwhile.
+        app.designs.failed = None;
+        app.designs.created = None;
     }
     app.designs.focused = focused;
-    if app.designs.entries.is_none() && app.designs.listing.is_none() {
-        let shown = app.designs.current.clone().unwrap_or(path);
+    let shown = app.designs.current.clone().unwrap_or(path);
+    let shown_text = shown.to_string_lossy().into_owned();
+    // A folder that could not be read is not listed again on its own: its message stays until the
+    // user tries again or goes elsewhere.
+    if app.designs.entries.is_none() && app.designs.listing.is_none() && app.designs.failed.as_deref() != Some(shown_text.as_str()) {
         start_listing(app, &shown, ctx);
     }
 }
@@ -228,11 +253,13 @@ fn start_listing(app: &mut SolveApp, path: &Path, ctx: &egui::Context) {
     });
     if spawned.is_ok() {
         app.designs.listing = Some(rx);
+        app.designs.listing_path = Some(dir);
         app.designs.error = None;
         app.designs.entries = None;
         app.designs.thumbnails.clear();
     } else {
         app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+        app.designs.failed = app.designs.listing_path.clone();
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(50));
 }
@@ -249,9 +276,11 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
             app.designs.listing = None;
             if let Some(error) = value.get("error").and_then(Value::as_str) {
                 app.designs.error = Some(error.to_string());
+                app.designs.failed = app.designs.listing_path.clone();
                 app.designs.entries = None;
             } else if let Some(entries) = Entries::from_json(&value) {
                 app.designs.error = None;
+                app.designs.failed = None;
                 app.designs.current = Some(PathBuf::from(&entries.path));
                 app.designs.thumb_rx = start_thumbnails(&entries);
                 app.designs.entries = Some(entries);
@@ -260,6 +289,7 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
         Some(Err(())) => {
             app.designs.listing = None;
             app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+            app.designs.failed = app.designs.listing_path.clone();
         }
         None => {
             if app.designs.listing.is_some() {
@@ -365,7 +395,7 @@ fn repository_header(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             }
             ui.separator();
             if ui.button(crate::i18n::tr("designs.manage_repositories")).clicked() {
-                crate::prefs::open_at(app, crate::prefs::PAGE_DESIGNS);
+                crate::prefs::open_at(app, crate::prefs::PAGE_REPOSITORIES);
                 ui.close();
             }
         });
@@ -417,6 +447,7 @@ fn navigate(app: &mut SolveApp, path: PathBuf) {
     app.designs.current = Some(path);
     app.designs.entries = None;
     app.designs.error = None;
+    app.designs.failed = None;
     app.designs.selected = None;
     app.designs.refresh = true;
 }
@@ -449,6 +480,9 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
         if ui.button(crate::i18n::tr("designs.refresh")).clicked() {
             app.designs.entries = None;
             app.designs.refresh = true;
+            // Refresh means try again, even for a folder that could not be made or read.
+            app.designs.failed = None;
+            app.designs.created = None;
         }
     });
 }
@@ -466,18 +500,39 @@ fn create_folder(app: &mut SolveApp, name: &str) {
     }
 }
 
+/// A message without the command id the engine prefixes its errors with (`designs.folder_new: …`,
+/// "invalid parameters for `designs.folder_new`: …"): what the panel shows under
+/// `designs.unavailable`.
+fn plain(error: &str) -> &str {
+    let after = |head: &str, tail: &str| error.strip_prefix(head).and_then(|rest| rest.split_once(tail)).map(|(_, message)| message);
+    after("designs.", ": ").or_else(|| after("invalid parameters for `", "`: ")).map_or(error, |message| message)
+}
+
 fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
+    crate::scenario::publish_count("designs:loading", if app.designs.listing.is_some() { 1.0 } else { 0.0 });
+    let unavailable = app.designs.entries.is_none() && app.designs.listing.is_none() && app.designs.error.is_some();
+    crate::scenario::publish_count("designs:unavailable", if unavailable { 1.0 } else { 0.0 });
     let Some(entries) = app.designs.entries.take() else {
         if app.designs.listing.is_some() {
             ui.add(egui::Spinner::new().size(18.0));
         } else if let Some(error) = &app.designs.error {
-            ui.label(RichText::new(error).color(t.error).size(12.0));
+            // The folder is not there and could not be made, or it cannot be read: say so, and
+            // offer to try again instead of waiting.
+            ui.label(RichText::new(crate::i18n::tr("designs.unavailable")).size(12.5).color(t.error));
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(RichText::new(plain(error)).size(11.0).color(t.text_dim)).wrap());
+            ui.add_space(6.0);
+            if ui.button(crate::i18n::tr("designs.retry")).clicked() {
+                app.designs.failed = None;
+                app.designs.created = None;
+                app.designs.entries = None;
+            }
         }
         return;
     };
     app.designs.refresh = false;
     if let Some(error) = &app.designs.error {
-        ui.label(RichText::new(error).color(t.error).size(12.0));
+        ui.label(RichText::new(plain(error)).color(t.error).size(12.0));
         ui.add_space(4.0);
     }
     let mut actions = Vec::new();
