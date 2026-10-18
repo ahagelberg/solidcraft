@@ -3854,7 +3854,10 @@ impl SolveApp {
         if agent_chat::shown(self) {
             agent_chat::settings::dialog(self, ui.ctx());
         }
+        // The Designs panel is on the start page too: it is how designs and importable files
+        // are found in the first place.
         if self.home.open {
+            designs_panel::show(self, ui);
             let workspace = ui.available_rect_before_wrap();
             panel_runtime::hide_app_host(self);
             home::show(self, ui);

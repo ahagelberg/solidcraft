@@ -94,6 +94,9 @@ struct DesignRow {
     name: String,
     path: String,
     modified: u64,
+    /// `design`, or what imports it: `step` (STEP, IGES, FreeCAD, Rhino) or `mesh` (3MF, STL,
+    /// OBJ, glTF).
+    kind: String,
 }
 
 impl Entries {
@@ -123,6 +126,7 @@ impl Entries {
                     name: d.get("name").and_then(Value::as_str)?.to_string(),
                     path: d.get("path").and_then(Value::as_str)?.to_string(),
                     modified: d.get("modified").and_then(Value::as_u64).unwrap_or(0),
+                    kind: d.get("kind").and_then(Value::as_str).unwrap_or("design").to_string(),
                 })
             })
             .collect();
@@ -716,7 +720,10 @@ fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &Desig
     if response.drag_started() {
         egui::DragAndDrop::set_payload(ui.ctx(), DesignDrag { path: design.path.clone() });
     }
-    draw_picture(app, ui, rect, &design.path, "box");
+    // A design shows its own thumbnail; a file SolidCraft imports has none, so it shows the
+    // importer's icon.
+    let icon = if design.kind == "design" { "box" } else { "import" };
+    draw_picture(app, ui, rect, &design.path, icon);
     let sub = crate::local_time::format(design.modified);
     row_text(app, ui, rect, &design.path, &design.name, &sub);
     if response.double_clicked() {
