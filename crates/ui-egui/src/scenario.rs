@@ -133,6 +133,8 @@ pub struct Harness {
     pub dir: PathBuf,
     /// The file the next Open picker returns (a `choose_file` step).
     next_file: Rc<RefCell<Option<String>>>,
+    /// The folder the last Save picker was started in (the repositories preference).
+    save_folder: Rc<RefCell<Option<String>>>,
     /// The app's request queue, opened by the first queued request.
     queue: Option<std::sync::mpsc::Sender<ControlRequest>>,
     time: f64,
@@ -164,6 +166,7 @@ impl Harness {
             output: Default::default(),
             dir: scratch_dir(),
             next_file: Rc::new(RefCell::new(None)),
+            save_folder: Rc::new(RefCell::new(None)),
             queue: None,
             time: 0.0,
             size: egui::vec2(1600.0, 1000.0),
@@ -180,10 +183,18 @@ impl Harness {
     /// the scenario chose.
     fn install(&mut self) {
         let dir = self.dir.clone();
-        self.app.services.pick_save =
-            Some(Box::new(move |name, _| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+        let folder = self.save_folder.clone();
+        self.app.services.pick_save = Some(Box::new(move |name, _, start| {
+            *folder.borrow_mut() = start.map(str::to_string);
+            Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))
+        }));
         let next = self.next_file.clone();
         self.app.services.pick_open = Some(Box::new(move |_| Box::pin(std::future::ready(next.borrow_mut().take()))));
+    }
+
+    /// The folder the last Save picker was started in (what Save As defaults to).
+    pub fn last_save_folder(&self) -> Option<String> {
+        self.save_folder.borrow().clone()
     }
 
     /// Autosave into the scenario's recovery folder (as the desktop app does into the user's).

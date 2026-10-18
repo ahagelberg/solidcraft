@@ -308,7 +308,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // While a file loads the design waits: no menus or commands from the bar.
         let idle = !app.file_load.busy();
         // The Designs panel, left of the File menu (the 3x3 grid).
-        if app.services.designs_panel {
+        if app.services.designs_panel && app.preferences.repositories_panel {
             if crate::designs_panel::app_bar_button(app, ui, r, x, idle) {
                 app.ui.show_designs = !app.ui.show_designs;
             }
@@ -615,7 +615,9 @@ fn save_as(app: &mut SolveApp) {
 
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
     let name = format!("{}.{extension}", app.session.doc.name);
-    app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
+    // With repositories on, the picker starts in the folder the panel shows.
+    let folder = crate::designs_panel::save_folder(app);
+    app.pick_save_in(folder.as_deref(), &name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         if let Some(path) = path {
             // A design saved as a design carries its preview, so the Designs panel shows it.
             let cache = path.ends_with(solidcraft_engine::io::DESIGN_EXT);
@@ -1472,7 +1474,7 @@ mod header_report_tests {
         h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
         let dir = h.dir.clone();
         h.app.services.pick_save =
-            Some(Box::new(move |name, _extensions| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+            Some(Box::new(move |name, _extensions, _folder| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();

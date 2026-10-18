@@ -710,6 +710,8 @@
   "designs.title": "デザイン",
   "designs.truncated": "一部の項目は表示されていません",
   "designs.unavailable": "このフォルダは利用できません",
+  "designs.use_panel": "リポジトリパネルを使用",
+  "designs.use_panel_note": "ボタンとパネルが表示され、名前を付けて保存はリポジトリのフォルダで始まります。オフのときは前回の場所に保存します。",
   "dialog.computing": "計算中… {seconds} 秒",
   "dialog.custom_axis": "↖ カスタム軸",
   "dialog.edit_title": "{title}を編集",

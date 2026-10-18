@@ -444,6 +444,15 @@ pub struct Prefs {
     pub repositories: Vec<Repository>,
     #[serde(default)]
     pub active_repository: String,
+    /// Use the repositories: the panel and its app bar button, and Save As starts in the folder
+    /// the panel shows. Off, SolidCraft saves where the picker last was, as before.
+    #[serde(default = "yes")]
+    pub repositories_panel: bool,
+}
+
+/// A switch that is on unless it was turned off.
+const fn yes() -> bool {
+    true
 }
 
 /// What a middle-button double-click in the view does.
@@ -539,6 +548,7 @@ impl Default for Prefs {
             agent_chat_turn_limit: crate::agent_chat::gate::DEFAULT_TURN_LIMIT,
             repositories: Repository::suggested(),
             active_repository: String::new(),
+            repositories_panel: true,
         }
     }
 }
@@ -829,6 +839,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_REPOSITORIES => {
             p.repositories = Repository::suggested();
             p.active_repository.clear();
+            p.repositories_panel = true;
         }
         _ => app.ui.pick_bodies = false,
     }
@@ -1850,6 +1861,23 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    /// The repositories switch: on unless it was turned off (a preference saved before it existed
+    /// still has it on), it turns off through `ui.prefs`, it is saved, and Restore Defaults on its
+    /// page puts it back.
+    #[test]
+    fn the_repositories_switch_defaults_on_and_is_saved() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert!(app.preferences.repositories_panel);
+        let out = super::set(&mut app, &json!({ "repositories_panel": false })).unwrap();
+        assert_eq!(out["repositories_panel"], json!(false));
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&app.prefs());
+        assert!(!other.preferences.repositories_panel, "the switch did not survive a save");
+        super::defaults(&mut other, super::PAGE_REPOSITORIES);
+        assert!(other.preferences.repositories_panel, "Restore Defaults left it off");
+    }
+
     /// The interface font (#1290): a font that can be read, or empty for the built-in one; saved
     /// with the others and reset by Restore Defaults.
     #[test]
