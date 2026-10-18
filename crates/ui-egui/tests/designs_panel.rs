@@ -45,12 +45,14 @@ fn a_repository_folder_that_cannot_be_made_is_reported_not_spun_on() {
     .unwrap();
     assert!(!blocked.exists(), "{} was made after all", blocked.display());
 
-    // Try Again once the way is clear makes the folder and lists it.
+    // Try Again once the way is clear makes the folder and lists it. The list is the thing to
+    // wait for: while a listing runs the rows are not drawn at all (no `designs:folders`), so
+    // "the error is gone" alone could be seen mid-listing.
     std::fs::remove_file(h.dir.join("blocker")).unwrap();
     h.run(&json!([
         { "widget": "Try Again" },
-        { "until": { "count": { "name": "designs:unavailable", "value": 0 } } },
-        { "expect": { "count": { "name": "designs:folders", "value": 0 } } }
+        { "until": { "count": { "name": "designs:folders", "value": 0 } } },
+        { "expect": { "count": { "name": "designs:unavailable", "value": 0 } } }
     ]))
     .unwrap();
     assert!(blocked.is_dir(), "Try Again did not make {}: {:?}", blocked.display(), listing(&h));
