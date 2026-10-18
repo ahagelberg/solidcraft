@@ -520,10 +520,23 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
         })
         .unwrap_or_default();
     let mut target = None;
+    let t = Tokens::get();
     ui.horizontal_wrapped(|ui| {
-        let root_link = ui.link(RichText::new(root_name).size(11.5));
-        crate::scenario::publish_handle("designs:breadcrumb:root", root_link.rect.center());
-        if root_link.clicked() {
+        // A house, not the repository's name: the folder is the start of every path, and the
+        // name is one hover away.
+        let (home, response) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
+        crate::scenario::publish_handle("designs:breadcrumb:root", home.center());
+        let ink = if response.hovered() || response.has_focus() { t.accent } else { t.text };
+        crate::icons::paint(
+            ui.painter(),
+            egui::Rect::from_center_size(home.center() + vec2(0.0, 1.0), vec2(17.0, 17.0)),
+            "home",
+            ink,
+            t.icon_fill,
+            t.accent,
+        );
+        let response = response.on_hover_text(&root_name).on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() {
             target = Some(root.clone());
         }
         let mut path = root.clone();
