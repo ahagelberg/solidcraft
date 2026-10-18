@@ -647,18 +647,14 @@ pub(crate) fn save_copy(app: &mut SolveApp) {
 
 /// Save As offers the open file's own name, not the name stored in the design (#8329).
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
+    // With repositories on, Save As is the repository's own dialog: it can only write inside the
+    // repository, starting at the folder the panel shows.
+    if crate::designs_save::open(app, extension != solidcraft_engine::io::DESIGN_EXT) {
+        return;
+    }
     let name = app.session.save_as_name();
     save_as_named(app, &name, extension);
 }
-
-pub(crate) fn save_as_named(app: &mut SolveApp, name: &str, extension: &str) {
-    // The Capture Position question first, as Save asks it: the file can't hold a move not
-    // captured yet (#9736).
-    if crate::browser::needs_capture(app, crate::browser::SAVE) {
-        app.tree.capture_prompt = Some(crate::browser::save_as_question(name, extension));
-        return;
-    }
-    let name = format!("{name}.{extension}");
     app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         // A save under way answers a closing tab when it ends.
         if let Some(path) = path
