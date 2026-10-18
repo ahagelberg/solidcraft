@@ -109,6 +109,49 @@ fn the_panel_lists_a_repository_and_makes_a_folder() {
 }
 
 #[test]
+fn f2_renames_the_picked_row_like_a_file_browser() {
+    let mut h = panel();
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "until": { "count": { "name": "designs:designs", "value": 1 } } }
+    ]))
+    .unwrap();
+
+    // Pick the row (as a click does) and press F2: the name is in an editor, the whole of it
+    // selected, so typing replaces it without clearing it first.
+    h.run(&json!([
+        { "click": { "handle": "designs:row:plate" } },
+        { "key": "F2" },
+        { "text": "dish" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:designs", "value": 1 } } }
+    ]))
+    .unwrap();
+    assert!(h.dir.join("dish.solidcraft").is_file(), "F2 did not rename: {:?}", listing(&h));
+    assert!(!h.dir.join("plate.solidcraft").exists(), "the old file stayed: {:?}", listing(&h));
+}
+
+#[test]
+fn the_panel_can_be_dragged_wider_and_remembers_it() {
+    let mut h = panel();
+    let before = solidcraft_ui_egui::scenario::rect_of("designs:panel").expect("the panel was drawn");
+    let (from, to) = ((before.right() - 1.0, before.center().y), (before.right() + 79.0, before.center().y));
+    h.run(&json!([{ "drag": [[from.0, from.1], [to.0, to.1]], "steps": 8 }])).unwrap();
+    let after = solidcraft_ui_egui::scenario::rect_of("designs:panel").expect("the panel was drawn");
+    assert!(after.width() > before.width() + 50.0, "the panel is {:.0} px wide, was {:.0}", after.width(), before.width());
+    let width = h.app.preferences.designs_width;
+    assert!((width - after.width()).abs() < 1.0, "the preference is {width}, the panel {}", after.width());
+
+    // A fresh app reads the width back.
+    let mut other = Harness::new();
+    other.app.services.designs_panel = true;
+    other.app.load_prefs(&h.app.prefs());
+    other.frames(2);
+    let shown = solidcraft_ui_egui::scenario::rect_of("designs:panel").map(|r| r.width()).unwrap_or(0.0);
+    assert!((shown - width).abs() < 1.0, "a new app shows the panel {shown} px wide, want {width}");
+}
+
+#[test]
 fn a_row_renames_and_deletes_its_design() {
     let mut h = panel();
     h.run(&json!([
