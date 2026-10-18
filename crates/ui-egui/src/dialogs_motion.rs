@@ -1206,7 +1206,7 @@ mod tests {
         *steps = "4".into();
         *tracks = vec![Track { joint: 0, index: 0, points: vec![(0, "0 deg".into()), (4, "90 deg".into())] }];
         let dir = h.dir.clone();
-        h.app.services.pick_save = Some(Box::new(move |name, extensions, _folder| {
+        h.app.services.pick_save = Some(Box::new(move |name, extensions| {
             assert_eq!((name, extensions), ("Swing.gif", &["gif"][..]));
             Box::pin(std::future::ready(Some(dir.join("swing").to_string_lossy().into_owned())))
         }));

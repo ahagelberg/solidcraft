@@ -1028,7 +1028,7 @@ mod tests {
         let file = std::env::temp_dir().join(format!("solidcraft-quit-saveas-{}.solidcraft", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let to = file.to_string_lossy().to_string();
-        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str], _: Option<&str>| Box::pin(std::future::ready(Some(to.clone())))));
+        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str]| Box::pin(std::future::ready(Some(to.clone())))));
         request_quit(&mut a);
         answer_prompt(&mut a, Answer::Save);
         assert!(!a.quit_requested && a.file_picker_busy());

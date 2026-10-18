@@ -761,6 +761,11 @@ pub(crate) fn save_as(app: &mut SolveApp) {
 }
 
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
+    // With repositories on, Save As is the repository's own dialog: it can only write inside the
+    // repository, starting at the folder the panel shows.
+    if crate::designs_save::open(app, extension != solidcraft_engine::io::DESIGN_EXT) {
+        return;
+    }
     let name = format!("{}.{extension}", app.session.doc.name);
     app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         // A save under way answers a closing tab when it ends.
@@ -2146,7 +2151,7 @@ mod header_report_tests {
         h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
         let dir = h.dir.clone();
         h.app.services.pick_save =
-            Some(Box::new(move |name, _extensions, _folder| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+            Some(Box::new(move |name, _extensions| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();
