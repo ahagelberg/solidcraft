@@ -326,6 +326,13 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         x = home.right() + 8.0;
         app_bar_separator(ui, r, x, "brand");
         x += 16.0;
+        // The Designs panel, left of the File menu (the 3x3 grid).
+        if app.services.designs_panel {
+            if crate::designs_panel::app_bar_button(app, ui, r, x, idle) {
+                app.ui.show_designs = !app.ui.show_designs;
+            }
+            x += 30.0;
+        }
         // While a file loads the design waits: no menus or commands from the bar.
         // The File menu: a text button (New, Open, Save, Save As, Export…). Its handle keeps the
         // old `appbar:folder` name too, for scripts written against the folder button.
@@ -743,7 +750,7 @@ pub fn save(app: &mut SolveApp) {
         return;
     }
     if app.session.path.is_some() {
-        crate::save_job::start(app, "file.save", json!({}));
+        crate::save_job::start(app, "file.save", json!({ "cache": true }));
     } else {
         save_as(app);
     }
@@ -757,10 +764,12 @@ fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
     let name = format!("{}.{extension}", app.session.doc.name);
     app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         // A save under way answers a closing tab when it ends.
-        if let Some(path) = path
-            && crate::save_job::start(app, "file.save_as", json!({"path": path}))
-        {
-            return;
+        // A design saved as a design carries its preview, so the Designs panel shows it.
+        if let Some(path) = path {
+            let cache = path.ends_with(solidcraft_engine::io::DESIGN_EXT);
+            if crate::save_job::start(app, "file.save_as", json!({ "path": path, "cache": cache })) {
+                return;
+            }
         }
         crate::documents::saved_for_close(app);
     });

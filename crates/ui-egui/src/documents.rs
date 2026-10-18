@@ -4,8 +4,10 @@
 //! Closing a design with unsaved changes asks first, and so does quitting: one "save changes?"
 //! per design with unsaved changes ([`request_quit`]).
 
+use std::path::Path;
+
 use crate::ui_kit::{Container, Surface};
-use egui::{FontId, Rect, Sense, pos2, vec2};
+use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
 use solidcraft_engine::render::Camera;
@@ -78,6 +80,43 @@ impl Documents {
     /// Number of open designs (at least the active one).
     pub fn count(&self) -> usize {
         self.slots.len().max(1)
+    }
+
+    /// Whether a design with this path is open in any tab (the active one included).
+    pub fn is_open(&self, app: &SolveApp, path: &str) -> bool {
+        if app.session.path.as_deref() == Some(path) {
+            return true;
+        }
+        self.slots.iter().flatten().any(|slot| slot.session.path.as_deref() == Some(path))
+    }
+}
+
+/// Point open tabs and recent entries at a renamed or moved path; a moved folder retargets
+/// everything below it.
+pub fn retarget(app: &mut SolveApp, old: &str, new: &str) {
+    let rewrite = |current: &str| -> Option<String> {
+        if current == old {
+            return Some(new.to_string());
+        }
+        let rest = Path::new(current).strip_prefix(old).ok()?;
+        Some(Path::new(new).join(rest).to_string_lossy().into_owned())
+    };
+    if let Some(current) = app.session.path.clone()
+        && let Some(next) = rewrite(&current)
+    {
+        app.session.path = Some(next);
+    }
+    for slot in app.docs.slots.iter_mut().flatten() {
+        if let Some(current) = slot.session.path.clone()
+            && let Some(next) = rewrite(&current)
+        {
+            slot.session.path = Some(next);
+        }
+    }
+    for recent in &mut app.home.recent {
+        if let Some(next) = rewrite(recent) {
+            *recent = next;
+        }
     }
 }
 

@@ -29,6 +29,9 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod designs_panel;
+pub mod designs_properties;
+pub mod designs_repositories;
 mod dialog_descriptor;
 pub mod dialogs;
 pub mod dialogs_appearance;
@@ -80,6 +83,7 @@ pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
 mod linked_source;
+pub mod local_time;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
 #[cfg(test)]
@@ -267,6 +271,7 @@ pub struct UiState {
     pub ribbon_context: Option<String>,
     pub show_browser: bool,
     pub show_timeline: bool,
+    pub show_designs: bool,
     pub show_grid: bool,
     pub show_origin: bool,
     pub perspective: bool,
@@ -302,6 +307,7 @@ impl Default for UiState {
             ribbon_context: None,
             show_browser: true,
             show_timeline: true,
+            show_designs: true,
             show_grid: true,
             show_origin: true,
             perspective: false,
@@ -334,6 +340,11 @@ pub struct Services {
     pub pick_file: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a folder (a repository, a destination to move a design to); `None` without one.
+    pub pick_folder: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// The host shows the Designs panel (desktop). Its repository folders are created and read
+    /// only when it is on; tests and the browser leave it off.
+    pub designs_panel: bool,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
@@ -502,6 +513,8 @@ pub struct SolveApp {
     /// The sheet metal flat pattern's own pan and zoom.
     pub flat_view: dialogs_sheet::FlatView,
     /// The start page.
+    /// The Designs panel: its listing, thumbnails and open dialogs.
+    pub designs: designs_panel::State,
     pub home: home::HomeState,
     /// The 3D mouse: which device, its reading, and the calibration window.
     pub space_mouse: space_mouse::Input,
@@ -614,6 +627,7 @@ impl SolveApp {
             fitted: false,
             pending_fit: None,
             flat_view: Default::default(),
+            designs: designs_panel::State::default(),
             home: home::HomeState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
@@ -686,6 +700,7 @@ impl SolveApp {
         json!({
             "dark": self.ui.dark,
             "grid": self.ui.show_grid,
+            "show_designs": self.ui.show_designs,
             "perspective": self.ui.perspective,
             "pick_bodies": self.ui.pick_bodies,
             "auto_project": self.session.auto_project,
@@ -715,6 +730,9 @@ impl SolveApp {
         }
         if let Some(g) = flag("grid") {
             self.ui.show_grid = g;
+        }
+        if let Some(d) = flag("show_designs") {
+            self.ui.show_designs = d;
         }
         if let Some(p) = flag("perspective") {
             self.ui.perspective = p;
@@ -874,6 +892,7 @@ impl SolveApp {
                     self.home.add_recent(&p);
                     if matches!(id, "file.save" | "file.save_as") {
                         home::remember_session(&mut self.home, &self.session);
+                        designs_panel::invalidate(self, &p);
                     }
                 }
             }
@@ -1266,15 +1285,10 @@ impl SolveApp {
         }
     }
 
-    /// A dropped file: a STEP or mesh file (3MF, STL, OBJ, glTF) joins a design that has features, anything else
-    /// opens.
+    /// A dropped file: a design becomes a component of the open design, a STEP or mesh file is
+    /// inserted the same way, and anything else is refused with a message (Home opens files).
     pub fn drop_path(&mut self, path: &str) {
-        let import = solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path);
-        if import && !self.session.doc.features.is_empty() {
-            self.insert_path_async(path);
-        } else {
-            self.open_path_async(path);
-        }
+        crate::designs_panel::drop_path(self, path);
     }
 
     /// Frame the model at once (programmatic use; the toolbar animates).
@@ -1709,6 +1723,7 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
+        designs_panel::show(self, ui);
         if self.ui.show_browser {
             browser::browser(self, ui);
         }

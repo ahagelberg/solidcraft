@@ -232,6 +232,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let open_parent = parent.clone();
     let program_parent = parent.clone();
     let file_parent = parent.clone();
+    let folder_parent = parent.clone();
     Services {
         pick_open: Some(Box::new(move |first: &[&str]| {
             // The file type the command reads comes first, so the picker opens on it (#1801).
@@ -270,6 +271,11 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
             let future = dialog.pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
+        pick_folder: Some(Box::new(move || {
+            let future = folder_parent.clone().set_title("Choose a folder").pick_folder();
+            Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
+        })),
+        designs_panel: true,
         pick_save: Some(Box::new(move |name: &str, exts: &[&str]| {
             let dialog = parent.clone().set_file_name(name);
             let dialog = if exts == [io::DESIGN_EXT, "json"] {

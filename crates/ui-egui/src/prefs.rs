@@ -208,8 +208,67 @@ impl Prefs {
 pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
+
+/// A named folder of designs in the Designs panel (a repository, like a Fusion project hub).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Repository {
+    /// Stable id the panel's active selection refers to.
+    pub id: String,
+    /// The name shown in the panel and in Preferences.
+    pub name: String,
+    /// What the folder is for (empty: none).
+    pub description: String,
+    /// The folder, absolute; empty when the platform offers no home folder to suggest.
+    pub path: String,
+}
+
+impl Repository {
+    /// The repository a new install starts with: the user's Documents folder, named after them.
+    pub fn suggested() -> Vec<Repository> {
+        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: documents_folder() }]
+    }
+}
+
+/// The OS user name, for the first repository's name (`$USER`, `$USERNAME`, else the home folder).
+fn user_name() -> String {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    env("USER")
+        .or_else(|| env("USERNAME"))
+        .or_else(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                dirs::home_dir().and_then(|h| h.file_name().map(|n| n.to_string_lossy().into_owned()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        })
+        .unwrap_or_else(|| "Designs".into())
+}
+
+/// The system's Documents folder (XDG user dirs, the Windows Known Folder, `~/Documents`), falling
+/// back to the home folder. Never a hard-coded folder name.
+fn documents_folder() -> String {
+    // Tests and scenarios point this at a scratch folder: they must never create or list the
+    // user's real Documents folder.
+    if let Some(dir) = std::env::var_os("SOLIDCRAFT_DESIGNS_DIR").filter(|d| !d.is_empty()) {
+        return std::path::PathBuf::from(dir).to_string_lossy().into_owned();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        String::new()
+    }
+}
+
 /// Stable control-channel names; presentation labels may be shorter.
-pub const PAGES: [&str; 9] = ["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins"];
+pub const PAGES: [&str; 10] =
+    ["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins", "Designs"];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_INTERFACE: usize = 1;
 pub const PAGE_DESIGN: usize = 2;
@@ -219,7 +278,8 @@ pub const PAGE_SKETCH: usize = 5;
 pub const PAGE_GRAPHICS: usize = 6;
 pub const PAGE_AI: usize = 7;
 pub const PAGE_PLUGINS: usize = 8;
-const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 9] = [
+pub const PAGE_DESIGNS: usize = 9;
+const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 10] = [
     ui_kit::WindowPage { icon: "settings", label: "ui.general", group: None, handle: "prefs:page:General", scroll: true, draw: window_page::<0> },
     ui_kit::WindowPage {
         icon: "settings_palette",
@@ -277,6 +337,14 @@ const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 9] = [
         handle: "prefs:page:Plugins",
         scroll: true,
         draw: window_page::<8>,
+    },
+    ui_kit::WindowPage {
+        icon: "grid",
+        label: "designs.title",
+        group: None,
+        handle: "prefs:page:Designs",
+        scroll: true,
+        draw: window_page::<9>,
     },
 ];
 
@@ -584,6 +652,10 @@ preference_settings! {
     agent_chat_window: Option<[f32; 4]> = None, PAGE_AI;
     /// Changes the agent may make for one message.
     agent_chat_turn_limit: u32 = crate::agent_chat::gate::DEFAULT_TURN_LIMIT, PAGE_AI;
+    /// The folders the Designs panel browses, and the id of the one shown last (empty: the first).
+    repositories: Vec<Repository> = Repository::suggested(), PAGE_DESIGNS;
+    /// The id of the repository shown last (empty: the first).
+    active_repository: String = String::new(), PAGE_DESIGNS;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
@@ -1243,6 +1315,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         crate::agent_chat::settings::page(app, ui);
         return;
     }
+    if app.prefs_window.section == PAGE_DESIGNS {
+        crate::designs_repositories::page(app, ui);
+        return;
+    }
     if app.prefs_window.section == PAGE_PLUGINS {
         crate::plugins::page(app, ui);
         return;
@@ -1509,6 +1585,32 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
+    }
+    if new.repositories.len() > 32 {
+        return Err("`repositories` must have at most 32 entries".into());
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    for repository in &new.repositories {
+        let name = repository.name.trim();
+        if repository.id.trim().is_empty() || !ids.insert(repository.id.as_str()) {
+            return Err("every repository needs a unique, non-empty `id`".into());
+        }
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err("every repository needs a `name` of 1 to 64 characters".into());
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(format!("repository names must be unique: `{name}` appears twice"));
+        }
+        if repository.description.chars().count() > 200 {
+            return Err("a repository `description` is longer than 200 characters".into());
+        }
+        if repository.path.len() > 4096 || (!repository.path.is_empty() && !std::path::Path::new(&repository.path).is_absolute()) {
+            return Err("a repository `path` must be empty or an absolute path of at most 4096 bytes".into());
+        }
+    }
+    if !new.active_repository.is_empty() && !new.repositories.iter().any(|r| r.id == new.active_repository) {
+        return Err("`active_repository` must be the id of one of the `repositories`".into());
     }
     if new.theme != app.preferences.theme && new.theme != "system" {
         app.ui.dark = file.map_or(new.theme == "dark", |f| f.base.is_dark());

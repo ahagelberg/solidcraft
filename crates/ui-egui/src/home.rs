@@ -131,7 +131,7 @@ fn cache_path(key: &str) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn cached(key: &str) -> Option<egui::ColorImage> {
+pub(crate) fn cached(key: &str) -> Option<egui::ColorImage> {
     let path = cache_path(key)?;
     if std::fs::metadata(&path).ok()?.len() > 512 * 1024 {
         return None;
@@ -140,7 +140,7 @@ fn cached(key: &str) -> Option<egui::ColorImage> {
     decode_thumbnail(bytes)
 }
 
-fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
+pub(crate) fn decode_thumbnail(bytes: Vec<u8>) -> Option<egui::ColorImage> {
     if bytes.len() > 512 * 1024 {
         return None;
     }
