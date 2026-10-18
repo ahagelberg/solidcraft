@@ -204,6 +204,8 @@ fn a_newer_files_reply_matches_the_output_schema() {
         path: "a.sc".into(),
         bytes: 3,
         name: "a".into(),
+        version: 1,
+        versions: 1,
         kept_format: Some("solidcraft/99".into()),
         warnings: Some(vec!["Not kept: x. The previous file is `a.sc.bak`.".into()]),
         not_kept: Some(vec!["x".into()]),
@@ -212,7 +214,7 @@ fn a_newer_files_reply_matches_the_output_schema() {
     .unwrap_or_default();
     assert_eq!(
         lost,
-        json!({"path": "a.sc", "bytes": 3, "name": "a", "kept_format": "solidcraft/99", "warnings": ["Not kept: x. The previous file is `a.sc.bak`."], "not_kept": ["x"]})
+        json!({"path": "a.sc", "bytes": 3, "name": "a", "version": 1, "versions": 1, "kept_format": "solidcraft/99", "warnings": ["Not kept: x. The previous file is `a.sc.bak`."], "not_kept": ["x"]})
     );
     matches("file.save", &lost);
     let _ = std::fs::remove_dir_all(&dir);

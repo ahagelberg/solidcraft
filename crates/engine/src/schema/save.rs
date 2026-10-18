@@ -120,6 +120,12 @@ pub struct SaveResult {
     pub bytes: usize,
     /// The design's name once saved (a design with no name of its own takes the file's).
     pub name: String,
+    /// The version the file now holds (0 for a format that keeps none).
+    #[serde(default)]
+    pub version: u32,
+    /// How many versions the file holds.
+    #[serde(default)]
+    pub versions: u32,
     /// A file a newer SolidCraft saved: the format number it keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_format: Option<String>,
