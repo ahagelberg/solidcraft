@@ -12,6 +12,19 @@
   panel's name for all its commands. Drag a command from the dropdown onto a panel's label
   or empty space to append it; the insertion line shows its destination. Drop onto an existing
   button to insert before it. Buttons can also move between panels, and the layout is saved.
+- **Designs** (left, before the Browser). The grid button left of the File menu shows or hides
+  it. Its top row picks a repository (a folder you keep designs in, with a name and a
+  description; Preferences › Designs adds and edits them), and below it the folders of the
+  repository, each design with its thumbnail and the date it was last saved. A folder opens on
+  a double click and the breadcrumb above walks back out. **New Folder** makes one. Right-click a
+  design for Open, Insert into Current Design, Rename, Move…, Delete and Show in Folder; drag it
+  into an open design to place it as a component. Right-click a folder for Open, Rename, Move…,
+  Delete (only when empty) and Properties…, which edits its description and picture: the picture
+  and description live in the folder's hidden `.solidcraft-project` folder, and every folder is a
+  project in the same way. A design saved from SolidCraft carries its own picture, so the row
+  shows the part rather than a box. A design that is open in a tab cannot be deleted (the menu
+  says so); Close it first. The panel's folder and size are kept between runs, and its dates
+  follow the system's locale and time zone.
 - **Browser** (left). The design as a tree: document settings and units, named views, the
   origin, bodies, sketches, construction planes, canvases, joints and components. The eye shows or
   hides an item, a component's radio button makes it the active component, and right-clicking any

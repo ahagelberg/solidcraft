@@ -207,8 +207,9 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
 /// The dialog's pages, in order.
-pub const PAGES: [&str; 8] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI"];
+pub const PAGES: [&str; 9] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI", "Designs"];
 pub const PAGE_AI: usize = 7;
+pub const PAGE_DESIGNS: usize = 8;
 pub const PAGE_SHORTCUTS: usize = 2;
 pub const PAGE_DESIGN: usize = 3;
 pub const PAGE_GRAPHICS: usize = 4;
@@ -249,6 +250,63 @@ pub enum OrbitAround {
     ViewCentre,
     /// The model point under the cursor when the drag began.
     Cursor,
+}
+
+/// A named folder of designs in the Designs panel (a repository, like a Fusion project hub).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Repository {
+    /// Stable id the panel's active selection refers to.
+    pub id: String,
+    /// The name shown in the panel and in Preferences.
+    pub name: String,
+    /// What the folder is for (empty: none).
+    pub description: String,
+    /// The folder, absolute; empty when the platform offers no home folder to suggest.
+    pub path: String,
+}
+
+impl Repository {
+    /// The repository a new install starts with: the user's Documents folder, named after them.
+    pub fn suggested() -> Vec<Repository> {
+        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: documents_folder() }]
+    }
+}
+
+/// The OS user name, for the first repository's name (`$USER`, `$USERNAME`, else the home folder).
+fn user_name() -> String {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    env("USER")
+        .or_else(|| env("USERNAME"))
+        .or_else(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                dirs::home_dir().and_then(|h| h.file_name().map(|n| n.to_string_lossy().into_owned()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        })
+        .unwrap_or_else(|| "Designs".into())
+}
+
+/// The system's Documents folder (XDG user dirs, the Windows Known Folder, `~/Documents`), falling
+/// back to the home folder. Never a hard-coded folder name.
+fn documents_folder() -> String {
+    // Tests and scenarios point this at a scratch folder: they must never create or list the
+    // user's real Documents folder.
+    if let Some(dir) = std::env::var_os("SOLIDCRAFT_DESIGNS_DIR").filter(|d| !d.is_empty()) {
+        return std::path::PathBuf::from(dir).to_string_lossy().into_owned();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        String::new()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -379,6 +437,11 @@ pub struct Prefs {
     pub agent_chat_window: Option<[f32; 4]>,
     /// Changes the agent may make for one message.
     pub agent_chat_turn_limit: u32,
+    /// The folders the Designs panel browses, and the id of the one shown last (empty: the first).
+    #[serde(default = "Repository::suggested")]
+    pub repositories: Vec<Repository>,
+    #[serde(default)]
+    pub active_repository: String,
 }
 
 /// What a middle-button double-click in the view does.
@@ -472,6 +535,8 @@ impl Default for Prefs {
             agent_chat_popped: false,
             agent_chat_window: None,
             agent_chat_turn_limit: crate::agent_chat::gate::DEFAULT_TURN_LIMIT,
+            repositories: Repository::suggested(),
+            active_repository: String::new(),
         }
     }
 }
@@ -759,6 +824,10 @@ fn defaults(app: &mut SolveApp, page: usize) {
             }
         }
         5 => app.session.auto_project = true,
+        PAGE_DESIGNS => {
+            p.repositories = Repository::suggested();
+            p.active_repository.clear();
+        }
         _ => app.ui.pick_bodies = false,
     }
 }
@@ -1152,6 +1221,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     if app.prefs_window.section == PAGE_AI {
         crate::agent_chat::settings::page(app, ui);
+        return;
+    }
+    if app.prefs_window.section == PAGE_DESIGNS {
+        crate::designs_repositories::page(app, ui);
         return;
     }
     egui::Grid::new(("sc_prefs_grid", app.prefs_window.section)).num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| match app.prefs_window.section {
@@ -1731,6 +1804,32 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
+    }
+    if new.repositories.len() > 32 {
+        return Err("`repositories` must have at most 32 entries".into());
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    for repository in &new.repositories {
+        let name = repository.name.trim();
+        if repository.id.trim().is_empty() || !ids.insert(repository.id.as_str()) {
+            return Err("every repository needs a unique, non-empty `id`".into());
+        }
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err("every repository needs a `name` of 1 to 64 characters".into());
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(format!("repository names must be unique: `{name}` appears twice"));
+        }
+        if repository.description.chars().count() > 200 {
+            return Err("a repository `description` is longer than 200 characters".into());
+        }
+        if repository.path.len() > 4096 || (!repository.path.is_empty() && !std::path::Path::new(&repository.path).is_absolute()) {
+            return Err("a repository `path` must be empty or an absolute path of at most 4096 bytes".into());
+        }
+    }
+    if !new.active_repository.is_empty() && !new.repositories.iter().any(|r| r.id == new.active_repository) {
+        return Err("`active_repository` must be the id of one of the `repositories`".into());
     }
     if new.theme != app.preferences.theme && new.theme != "system" {
         app.ui.dark = file.map_or(new.theme == "dark", |f| f.base.is_dark());
