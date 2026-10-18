@@ -1698,6 +1698,13 @@ impl SolveApp {
                         designs_panel::invalidate(self, &p);
                     }
                 }
+                // A file written next to the designs (an export, a mesh) is a row now: the
+                // panel lists the formats SolidCraft imports.
+                if matches!(id, "file.export" | "file.save_mesh")
+                    && let Some(p) = v.get("path").and_then(Value::as_str)
+                {
+                    designs_panel::invalidate(self, p);
+                }
             }
             Err(e) => {
                 // The native menu runs Undo and Redo before `logic` installs the frame scope, so
@@ -3528,8 +3535,13 @@ impl SolveApp {
         if agent_chat::shown(self) {
             agent_chat::settings::dialog(self, ui.ctx());
         }
+        // The Designs panel is on the start page too: it is how designs and importable files
+        // are found in the first place.
+        let mut designs_shown = false;
         if self.home.open {
             panel_runtime::hide_app_host(self);
+            designs_panel::show(self, ui);
+            designs_shown = true;
             home::show(self, ui);
             if self.home.open {
                 // Agent detection runs in the background and is only received by `agent_chat::poll`
@@ -3540,6 +3552,11 @@ impl SolveApp {
                 browser::editors(self, ui);
                 return;
             }
+        }
+        // Docked beside the toolbar, the Designs browser takes its column before the bar lays
+        // out the rest of the frame.
+        if self.services.designs_panel && !designs_shown && !render_ui::focused(self) {
+            designs_panel::show(self, ui);
         }
         // The status bar first: it spans the window's width below History and the side panels.
         if self.universal_panel_host_enabled() {
@@ -3624,9 +3641,6 @@ impl SolveApp {
             if render_workspace::active(self) {
                 render_ui::shots_strip(self, ui);
                 render_workspace::panel(self, ui);
-            }
-            if self.services.designs_panel && !render_ui::focused(self) {
-                designs_panel::show(self, ui);
             }
             if self.ui.show_browser && !render_ui::focused(self) {
                 browser::browser(self, ui);
