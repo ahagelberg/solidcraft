@@ -206,13 +206,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .default_size(width)
         .size_range(WIDTH_MIN..=WIDTH_MAX)
         .resizable(true)
-        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
+        .frame(egui::Frame::NONE.fill(t.panel_header).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
             repository_header(app, ui, &t);
             ui.add_space(4.0);
-            breadcrumb(app, ui);
-            ui.add_space(4.0);
             actions(app, ui);
+            ui.add_space(4.0);
+            breadcrumb(app, ui);
             ui.separator();
             rows(app, ui, &t);
         });
@@ -264,6 +264,26 @@ pub fn rename_selected(app: &mut SolveApp, ctx: &egui::Context) -> bool {
 fn active_repository(app: &SolveApp) -> Option<&crate::prefs::Repository> {
     let id = &app.preferences.active_repository;
     app.preferences.repositories.iter().find(|r| r.id == *id).or_else(|| app.preferences.repositories.first())
+}
+
+fn folder_settings_target(app: &SolveApp) -> Option<(String, String)> {
+    let current = app.designs.current.as_ref()?;
+    let root = PathBuf::from(&active_repository(app)?.path);
+    if current == &root || !current.starts_with(&root) {
+        return None;
+    }
+    let name = current.file_name()?.to_string_lossy().into_owned();
+    Some((current.to_string_lossy().into_owned(), name))
+}
+
+fn open_folder_properties(app: &mut SolveApp, path: String, name: String) {
+    let description = app
+        .session
+        .execute("designs.project_get", &json!({ "path": path }))
+        .ok()
+        .and_then(|v| v.get("description").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_default();
+    app.designs.properties = Some(crate::designs_properties::Properties::new(path, name, description));
 }
 
 /// Follow the active repository: reset the listing when it changes, create a missing folder once,
@@ -520,6 +540,8 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
         })
         .unwrap_or_default();
     let mut target = None;
+    let settings_target = folder_settings_target(app);
+    let mut open_settings = false;
     let t = Tokens::get();
     ui.horizontal_wrapped(|ui| {
         // A house, not the repository's name: the folder is the start of every path, and the
@@ -547,9 +569,23 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
                 target = Some(path.clone());
             }
         }
+        if settings_target.is_some() {
+            let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
+            if response.hovered() || response.has_focus() {
+                ui.painter().rect_filled(rect, 4.0, t.hover);
+            }
+            crate::icons::paint_on(ui.painter(), rect.shrink(4.0), "settings", Some(crate::theme::is_dark()), 1.0);
+            crate::scenario::publish_handle("designs:folder_settings", rect.center());
+            if response.on_hover_text(crate::i18n::tr("designs.properties")).clicked() {
+                open_settings = true;
+            }
+        }
     });
     if let Some(target) = target {
         navigate(app, target);
+    }
+    if open_settings && let Some((path, name)) = settings_target {
+        open_folder_properties(app, path, name);
     }
 }
 
@@ -673,6 +709,7 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
 fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str) -> (egui::Rect, egui::Response) {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 54.0), Sense::click_and_drag());
     let selected = app.designs.selected.as_deref() == Some(path);
+    ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().field);
     if selected {
         ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().accent_soft);
     } else if response.hovered() {

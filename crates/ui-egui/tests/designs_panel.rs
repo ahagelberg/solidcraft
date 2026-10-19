@@ -90,6 +90,7 @@ fn the_panel_lists_a_repository_and_makes_a_folder() {
     // The panel makes the repository folder when it opens, and lists it empty.
     assert!(h.dir.is_dir(), "{} is not a folder", h.dir.display());
     h.run(&json!([{ "expect": { "count": { "name": "designs:folders", "value": 0 } } }])).unwrap();
+    assert!(solidcraft_ui_egui::scenario::handle_at("designs:folder_settings").is_none(), "repository root has folder settings");
 
     h.run(&json!([
         { "widget": "New Folder" },
@@ -107,6 +108,10 @@ fn the_panel_lists_a_repository_and_makes_a_folder() {
         { "click": { "handle": "designs:row:Brackets" }, "double": true },
         { "until": { "count": { "name": "designs:designs", "value": 1 } } },
         { "expect": { "count": { "name": "designs:folders", "value": 0 } } },
+        { "expect": { "shown_handles": ["designs:folder_settings"] } },
+        { "click": { "handle": "designs:folder_settings" } },
+        { "widget": "Project Properties" },
+        { "widget": "Cancel" },
         { "click": { "handle": "designs:breadcrumb:root" } },
         { "until": { "count": { "name": "designs:folders", "value": 1 } } },
         { "expect": { "count": { "name": "designs:designs", "value": 0 } } }
