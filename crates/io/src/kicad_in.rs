@@ -32,6 +32,9 @@ const MAX_VIAS: usize = 100_000;
 const MAX_ZONES: usize = 50_000;
 const MAX_ZONE_POINTS: usize = 500_000;
 const MAX_GRAPHICS: usize = 200_000;
+const MAX_TEXTS: usize = 20_000;
+/// Points one text's glyph outlines may have.
+const MAX_TEXT_POINTS: usize = 50_000;
 const MAX_PADS: usize = 500_000;
 const MAX_COPPER_ITEMS: usize = 50_000;
 const MAX_SILK_ITEMS: usize = 50_000;
@@ -127,6 +130,8 @@ pub struct KicadBoard {
     pub zones: Vec<KicadZone>,
     /// Board-level graphics on silk or copper layers.
     pub graphics: Vec<KicadStroke>,
+    /// Board-level text on silk or copper layers, in the board frame.
+    pub texts: Vec<KicadText>,
     /// Drilled holes (pads and vias) in the board frame.
     pub drills: Vec<KicadDrill>,
     pub color: [f32; 3],
@@ -145,6 +150,30 @@ pub struct KicadFootprint {
     pub pads: Vec<KicadPad>,
     /// Graphics on silk, copper or Edge.Cuts in the footprint frame, as the board file stores them.
     pub graphics: Vec<KicadStroke>,
+    /// Text on silk or copper in the footprint frame, as the board file stores it.
+    pub texts: Vec<KicadText>,
+}
+
+/// Text on a copper or silkscreen layer, in its containing frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KicadText {
+    pub text: String,
+    /// X/Y in millimetres and rotation in degrees, in the containing frame.
+    pub at: [f64; 3],
+    pub layer: String,
+    /// Cap height and glyph width in millimetres.
+    pub height: f64,
+    pub width: f64,
+    /// Stroke width in millimetres (the outlines are filled, so it only records the file's value).
+    pub thickness: f64,
+    pub bold: bool,
+    pub italic: bool,
+    /// The text reads from the other side of the board.
+    pub mirror: bool,
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -267,6 +296,7 @@ pub fn parse_kicad_board_with(bytes: &[u8], file: &str, options: KicadOptions) -
         vias: Vec::new(),
         zones: Vec::new(),
         graphics: Vec::new(),
+        texts: Vec::new(),
         drills: Vec::new(),
         color,
         warnings: Vec::new(),
@@ -274,14 +304,15 @@ pub fn parse_kicad_board_with(bytes: &[u8], file: &str, options: KicadOptions) -
     let mut segments = Vec::new();
     let mut model_count = 0usize;
     let mut pad_count = 0usize;
-    let mut text_seen = false;
+    let mut text_count = 0usize;
+    let mut extra_text_seen = false;
     for item in children(&root) {
         match head(item) {
             Some("footprint" | "module") => {
                 if board.footprints.len() >= MAX_FOOTPRINTS {
                     return Err(IoError::Invalid(format!("KiCad PCB has more than {MAX_FOOTPRINTS} footprints")));
                 }
-                match parse_footprint(item, &mut model_count, &mut pad_count, &mut board.warnings, &mut text_seen) {
+                match parse_footprint(item, &mut model_count, &mut pad_count, &mut text_count, &mut board.warnings, &mut extra_text_seen) {
                     Ok(footprint) => {
                         // Footprint graphics on Edge.Cuts are board edges, in board coordinates.
                         let transform = footprint_world(&footprint);
@@ -311,7 +342,16 @@ pub fn parse_kicad_board_with(bytes: &[u8], file: &str, options: KicadOptions) -
                     }
                 }
             }
-            Some("gr_text" | "gr_text_box" | "dimension" | "table") => text_seen = true,
+            Some("gr_text") => {
+                if let Some(text) = parse_text(item, 1) {
+                    if board.texts.len() >= MAX_TEXTS {
+                        board.warnings.push("additional board text was skipped".into());
+                    } else {
+                        board.texts.push(text);
+                    }
+                }
+            }
+            Some("gr_text_box" | "dimension" | "table") => extra_text_seen = true,
             Some("segment") => {
                 if let Some(track) = parse_track(item, &mut board.warnings) {
                     if board.tracks.len() >= MAX_TRACKS {
@@ -367,8 +407,8 @@ pub fn parse_kicad_board_with(bytes: &[u8], file: &str, options: KicadOptions) -
     for via in &board.vias {
         board.drills.push(KicadDrill { center: via.at, size: [via.drill.abs(), via.drill.abs()] });
     }
-    if text_seen {
-        board.warnings.push("silkscreen and copper text is not modeled yet".into());
+    if extra_text_seen {
+        board.warnings.push("text boxes, dimensions and tables are not modeled yet".into());
     }
     Ok(board)
 }
@@ -1020,6 +1060,197 @@ fn extrude_regions(regions: &[Region2], z0: f64, z1: f64) -> Result<solidcraft_g
     Ok(out)
 }
 
+/// How finely a text outline curve is drawn (mm).
+const TEXT_CURVE_STEP: f64 = 0.05;
+
+/// Segments for a control polygon, so short glyph curves stay cheap.
+fn glyph_segments(points: &[Vec2]) -> usize {
+    let mut length = 0.0;
+    for pair in points.windows(2) {
+        if let [a, b] = pair {
+            length += a.dist(*b);
+        }
+    }
+    ((length / TEXT_CURVE_STEP).ceil() as usize).clamp(4, 64)
+}
+
+/// A point on an open Bézier curve (de Casteljau).
+fn glyph_bezier(points: &[Vec2], t: f64) -> Vec2 {
+    let mut tmp = points.to_vec();
+    for r in 1..tmp.len() {
+        for i in 0..tmp.len() - r {
+            let a = tmp[i];
+            let b = tmp.get(i + 1).copied().unwrap_or(a);
+            tmp[i] = Vec2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        }
+    }
+    tmp.first().copied().unwrap_or_default()
+}
+
+/// A glyph outline element as a polyline (the text engine emits lines, conics and control
+/// splines; circles and arcs are handled for completeness).
+fn glyph_polyline(link: &solidcraft_sketch::LinkGeom) -> Vec<Vec2> {
+    use solidcraft_sketch::LinkGeom;
+    match link {
+        LinkGeom::Line(a, b) => vec![*a, *b],
+        LinkGeom::Circle(c, r) => {
+            let r = r.abs();
+            let n = ((std::f64::consts::TAU * r / TEXT_CURVE_STEP).ceil() as usize).clamp(8, 256);
+            (0..=n)
+                .map(|i| {
+                    let a = std::f64::consts::TAU * i as f64 / n as f64;
+                    Vec2::new(c.x + r * a.cos(), c.y + r * a.sin())
+                })
+                .collect()
+        }
+        LinkGeom::Arc { c, a, b } => {
+            let r = c.dist(*a);
+            if !(r.is_finite() && r > 1e-9) {
+                return Vec::new();
+            }
+            let start = (a.y - c.y).atan2(a.x - c.x);
+            let mut end = (b.y - c.y).atan2(b.x - c.x);
+            while end <= start {
+                end += std::f64::consts::TAU;
+            }
+            let n = ((r * (end - start) / TEXT_CURVE_STEP).ceil() as usize).clamp(4, 256);
+            (0..=n)
+                .map(|i| {
+                    let t = start + (end - start) * i as f64 / n as f64;
+                    Vec2::new(c.x + r * t.cos(), c.y + r * t.sin())
+                })
+                .collect()
+        }
+        LinkGeom::Conic { a, apex, b, rho } => {
+            // A rational quadratic; rho 0.5 is a plain quadratic Bézier.
+            let w = (rho / (1.0 - rho)).max(1e-9);
+            let n = glyph_segments(&[*a, *apex, *b]);
+            (0..=n)
+                .map(|i| {
+                    let t = i as f64 / n as f64;
+                    let (u, v) = (1.0 - t, t);
+                    let (aa, bb, cc) = (u * u, 2.0 * u * v * w, v * v);
+                    let d = aa + bb + cc;
+                    Vec2::new((aa * a.x + bb * apex.x + cc * b.x) / d, (aa * a.y + bb * apex.y + cc * b.y) / d)
+                })
+                .collect()
+        }
+        LinkGeom::Spline { pts, control, periodic, degree: _ } => {
+            if !*control || *periodic || pts.len() < 2 {
+                return Vec::new();
+            }
+            let n = glyph_segments(pts);
+            (0..=n).map(|i| glyph_bezier(pts, i as f64 / n as f64)).collect()
+        }
+        LinkGeom::Ellipse { .. } | LinkGeom::Point(_) => Vec::new(),
+    }
+}
+
+/// The closed contours of a text's glyph outlines, in glyph coordinates.
+fn glyph_loops(geometry: &[solidcraft_sketch::LinkGeom]) -> Vec<Vec<Vec2>> {
+    let mut loops = Vec::new();
+    let mut current: Vec<Vec2> = Vec::new();
+    let mut points = 0usize;
+    for link in geometry {
+        let polyline = glyph_polyline(link);
+        let Some(first) = polyline.first() else { continue };
+        points = points.saturating_add(polyline.len());
+        if points > MAX_TEXT_POINTS {
+            return Vec::new();
+        }
+        if current.is_empty() {
+            current = polyline;
+            continue;
+        }
+        if current.last().is_some_and(|end| end.dist(*first) <= 1e-6) {
+            current.extend_from_slice(polyline.get(1..).unwrap_or_default());
+        } else {
+            if current.len() >= 3 {
+                loops.push(std::mem::take(&mut current));
+            } else {
+                current.clear();
+            }
+            current = polyline;
+        }
+    }
+    if current.len() >= 3 {
+        loops.push(current);
+    }
+    loops
+        .into_iter()
+        .filter_map(|mut contour| {
+            if contour.len() >= 2 && contour.first().is_some_and(|first| contour.last().is_some_and(|last| first.dist(*last) <= 1e-6)) {
+                contour.pop();
+            }
+            (contour.len() >= 3).then_some(contour)
+        })
+        .collect()
+}
+
+/// The filled glyph outlines of a text item, in world coordinates.
+fn text_regions(text: &KicadText, origin: Vec2, angle: f64) -> Vec<Region2> {
+    let style = solidcraft_sketch::TextStyle { bold: text.bold, italic: text.italic, ..Default::default() };
+    let Ok(geometry) = solidcraft_sketch::text_geometry_styled(None, &text.text, Vec2::new(0.0, 0.0), text.height, 0.0, &style, None) else {
+        return Vec::new();
+    };
+    let contours = glyph_loops(&geometry);
+    if contours.is_empty() {
+        return Vec::new();
+    }
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for point in contours.iter().flatten() {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+    // KiCad's position is the text's centre unless it says how it is justified.
+    let offset_x = if text.left {
+        -min_x
+    } else if text.right {
+        -max_x
+    } else {
+        -(min_x + max_x) * 0.5
+    };
+    let offset_y = if text.top {
+        -max_y
+    } else if text.bottom {
+        -min_y
+    } else {
+        -(min_y + max_y) * 0.5
+    };
+    // `size` gives the height and the (possibly different) glyph width.
+    let wider = (text.width / text.height).max(1e-9);
+    let mirror = if text.mirror { -1.0 } else { 1.0 };
+    let (sin, cos) = angle.sin_cos();
+    let mut loops = Vec::with_capacity(contours.len());
+    for contour in &contours {
+        let mut points = Vec::with_capacity(contour.len());
+        for point in contour {
+            let x = (point.x + offset_x) * wider * mirror;
+            let y = point.y + offset_y;
+            points.push(Vec2::new(origin.x + cos * x - sin * y, origin.y + sin * x + cos * y));
+        }
+        loops.push(Loop2::polygon(&points));
+    }
+    regions_from_loops(loops, None)
+}
+
+/// Add a text's filled glyphs to a plate; false when its outlines could not be built.
+fn add_text_plate(plate: &mut Plate, text: &KicadText, origin: Vec2, angle: f64, z0: f64, z1: f64) -> bool {
+    let regions = text_regions(text, origin, angle);
+    if regions.is_empty() {
+        return false;
+    }
+    match extrude_regions(&regions, z0, z1) {
+        Ok(mesh) => {
+            plate.add_mesh(mesh.positions, mesh.triangles);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Accumulate simple polygonal plates into one mesh.
 #[derive(Default)]
 struct Plate {
@@ -1198,6 +1429,36 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut 
             add(plate, &|p| p.add_track(&points, graphic.width, z0, z1));
         }
     }
+    let mut text_failed = false;
+    {
+        let mut one = |text: &KicadText, origin: Vec2, angle: f64| {
+            if !is_outer_copper(&text.layer) {
+                return;
+            }
+            let (z0, z1) = if text.layer == "F.Cu" { (top, bottom) } else { (under, under_top) };
+            let plate = if text.layer == "F.Cu" { &mut front } else { &mut back };
+            let failed = std::cell::Cell::new(false);
+            add(plate, &|p| failed.set(failed.get() || !add_text_plate(p, text, origin, angle, z0, z1)));
+            if failed.get() {
+                text_failed = true;
+            }
+        };
+        let board_frame = board_to_world();
+        for text in &board.texts {
+            let origin = apply2(&board_frame, text.at[0], text.at[1]);
+            one(text, Vec2::new(origin[0], origin[1]), text.at[2].to_radians());
+        }
+        for footprint in &board.footprints {
+            let frame = footprint_world(footprint);
+            for text in &footprint.texts {
+                let origin = apply2(&frame, text.at[0], text.at[1]);
+                one(text, Vec2::new(origin[0], origin[1]), (footprint.at[2] + text.at[2]).to_radians());
+            }
+        }
+    }
+    if text_failed {
+        warnings.push("some copper text could not be built".into());
+    }
     if too_many {
         warnings.push("additional copper items were skipped".into());
     }
@@ -1251,6 +1512,37 @@ fn silkscreen_meshes(board: &KicadBoard, thickness: f64, warnings: &mut Vec<Stri
                 one(graphic, &transform);
             }
         }
+    }
+    let mut text_failed = false;
+    {
+        let mut text_one = |text: &KicadText, origin: Vec2, angle: f64| {
+            if !is_silk(&text.layer) {
+                return;
+            }
+            let front_side = text.layer == "F.SilkS";
+            let (z0, z1) = if front_side { (top, top_end) } else { (bottom, bottom_end) };
+            let plate = if front_side { &mut front } else { &mut back };
+            let failed = std::cell::Cell::new(false);
+            add(plate, &|p| failed.set(failed.get() || !add_text_plate(p, text, origin, angle, z0, z1)));
+            if failed.get() {
+                text_failed = true;
+            }
+        };
+        let board_frame = board_to_world();
+        for text in &board.texts {
+            let origin = apply2(&board_frame, text.at[0], text.at[1]);
+            text_one(text, Vec2::new(origin[0], origin[1]), text.at[2].to_radians());
+        }
+        for footprint in &board.footprints {
+            let frame = footprint_world(footprint);
+            for text in &footprint.texts {
+                let origin = apply2(&frame, text.at[0], text.at[1]);
+                text_one(text, Vec2::new(origin[0], origin[1]), (footprint.at[2] + text.at[2]).to_radians());
+            }
+        }
+    }
+    if text_failed {
+        warnings.push("some silkscreen text could not be built".into());
     }
     if too_many {
         warnings.push("additional silkscreen items were skipped".into());
@@ -1404,8 +1696,9 @@ fn parse_footprint(
     expr: &Expr<'_>,
     model_count: &mut usize,
     pad_count: &mut usize,
+    text_count: &mut usize,
     warnings: &mut Vec<String>,
-    text_seen: &mut bool,
+    extra_text_seen: &mut bool,
 ) -> std::result::Result<KicadFootprint, String> {
     let at = field(expr, "at").ok_or_else(|| "no placement".to_string()).and_then(|e| numbers(e, 2))?;
     let mut position = [
@@ -1422,6 +1715,7 @@ fn parse_footprint(
     let mut models = Vec::new();
     let mut pads = Vec::new();
     let mut graphics = Vec::new();
+    let mut texts = Vec::new();
     for child in children(expr) {
         match head(child) {
             Some("model") => {
@@ -1463,12 +1757,34 @@ fn parse_footprint(
                     None => warnings.push(format!("skipped an invalid {kind}")),
                 }
             }
-            Some("fp_text" | "fp_text_box") => *text_seen = true,
+            Some("fp_text") => {
+                *text_count = text_count.saturating_add(1);
+                if *text_count > MAX_TEXTS {
+                    return Err(format!("board has more than {MAX_TEXTS} text items"));
+                }
+                if let Some(text) = parse_text(child, 2) {
+                    texts.push(text);
+                }
+            }
+            Some("property") => {
+                // KiCad 8 and later write visible footprint fields as properties with a
+                // placement and effects (older files use `fp_text`).
+                if let Some(text) = parse_text(child, 2)
+                    && !texts.iter().any(|t: &KicadText| t.text == text.text && t.layer == text.layer && t.at == text.at)
+                {
+                    *text_count = text_count.saturating_add(1);
+                    if *text_count > MAX_TEXTS {
+                        return Err(format!("board has more than {MAX_TEXTS} text items"));
+                    }
+                    texts.push(text);
+                }
+            }
+            Some("fp_text_box") => *extra_text_seen = true,
             _ => {}
         }
     }
     position[2] = position[2].rem_euclid(360.0);
-    Ok(KicadFootprint { reference, value, layer, at: position, models, pads, graphics })
+    Ok(KicadFootprint { reference, value, layer, at: position, models, pads, graphics, texts })
 }
 
 fn parse_pad(expr: &Expr<'_>) -> std::result::Result<KicadPad, String> {
@@ -1512,6 +1828,68 @@ fn numeric_atoms(expr: &Expr<'_>) -> Option<Vec<f64>> {
         .filter(|v| v.is_finite() && v.abs() <= MAX_NUMBER)
         .collect();
     (!values.is_empty()).then_some(values)
+}
+
+/// Is this text or effects container hidden (`hide`, or `(hide yes)`)? `(hide no)` is not.
+fn is_hidden(expr: &Expr<'_>) -> bool {
+    children(expr).iter().any(|child| match child {
+        Expr::Atom(value) => value == "hide",
+        Expr::List(_) => head(child) == Some("hide") && children(child).get(1).and_then(atom) != Some("no"),
+    })
+}
+
+/// Text on a copper or silkscreen layer: `gr_text`'s string is the first attribute, `fp_text`'s
+/// the second (after its type).
+fn parse_text(expr: &Expr<'_>, text_index: usize) -> Option<KicadText> {
+    let text = children(expr).get(text_index).and_then(atom)?.to_string();
+    if text.trim().is_empty() {
+        return None;
+    }
+    let layer = layer_of(expr)?;
+    if !is_silk(&layer) && !is_outer_copper(&layer) {
+        return None;
+    }
+    let effects = field(expr, "effects");
+    if is_hidden(expr) || effects.is_some_and(is_hidden) {
+        return None;
+    }
+    let at = field(expr, "at").and_then(|e| numbers(e, 2).ok()).unwrap_or_default();
+    let x = at.first().copied().unwrap_or(0.0);
+    let y = at.get(1).copied().unwrap_or(0.0);
+    let angle = at.get(2).copied().unwrap_or(0.0);
+    if [x, y, angle].iter().any(|v| !v.is_finite() || v.abs() > MAX_NUMBER) {
+        return None;
+    }
+    let (mut height, mut width, mut thickness) = (1.0, 1.0, 0.15);
+    let (mut bold, mut italic) = (false, false);
+    if let Some(font) = effects.and_then(|e| field(e, "font")) {
+        if let Some(size) = field(font, "size").and_then(|e| numbers(e, 2).ok()) {
+            height = size.first().copied().unwrap_or(1.0);
+            width = size.get(1).copied().unwrap_or(height);
+        }
+        if let Some(t) = field(font, "thickness").and_then(|e| numbers(e, 1).ok()).and_then(|v| v.first().copied()) {
+            thickness = t;
+        }
+        bold = children(font).iter().any(|e| atom(e) == Some("bold"));
+        italic = children(font).iter().any(|e| atom(e) == Some("italic"));
+    }
+    if !(height.is_finite() && height > 1e-6 && height < 1e6 && width.is_finite() && width > 1e-6 && width < 1e6) {
+        return None;
+    }
+    let (mut left, mut right, mut top, mut bottom, mut mirror) = (false, false, false, false, false);
+    if let Some(justify) = effects.and_then(|e| field(e, "justify")) {
+        for word in children(justify).iter().filter_map(atom) {
+            match word {
+                "left" => left = true,
+                "right" => right = true,
+                "top" => top = true,
+                "bottom" => bottom = true,
+                "mirror" => mirror = true,
+                _ => {}
+            }
+        }
+    }
+    Some(KicadText { text, at: [x, y, angle], layer, height, width, thickness, bold, italic, mirror, left, right, top, bottom })
 }
 
 fn parse_model(expr: &Expr<'_>) -> std::result::Result<KicadModel, String> {

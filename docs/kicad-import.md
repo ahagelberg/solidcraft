@@ -20,8 +20,9 @@ The board substrate always comes in:
 The other layers are options:
 
 - **3D models** (`components`, default on): the STEP and VRML models that footprints reference, placed by the footprint's position and rotation. A model is authored for the front; on a back-side footprint it gets a half turn about X, which also puts it under the board. The model's own `at`/`offset`, `scale` and `rotate` (X, then Y, then Z) are applied, and a mirroring scale is refused. STEP models are tessellated at 0.1 mm; VRML 2.0 models are read directly (see below). A model referenced by several footprints is read once and placed by each, and every footprint that places a model becomes a component (named after its reference, e.g. `R1`) under the import's component.
-- **Copper** (`copper`, default off): the front and back copper foil, 0.035 mm thick, in a copper colour — tracks and track arcs, vias, filled zones, board-level copper graphics, and pads when `pads` is on (default on). Pads are the pad's copper shape; the drill passes through the substrate, not the copper.
-- **Silkscreen** (`silkscreen`, default on): the lines and filled shapes of the front and back silk layers, 0.01 mm above (or below) the substrate, in a white colour.
+- **Copper** (`copper`, default off): the front and back copper foil, 0.035 mm thick, in a copper colour — tracks and track arcs, vias, filled zones, board-level copper graphics, copper text, and pads when `pads` is on (default on). Pads are the pad's copper shape; the drill passes through the substrate, not the copper.
+- **Silkscreen** (`silkscreen`, default on): the lines, filled shapes and text of the front and back silk layers, 0.01 mm above (or below) the substrate, in a white colour.
+- **Text**: board and footprint text on the silk and copper layers becomes filled glyph outlines of SolidCraft's built-in font. KiCad's `size` gives the glyph height and width, bold and italic are set, left/right/top/bottom justification places the anchor, hidden text is skipped, and back-side text marked `mirror` reads from the back of the board. Text boxes, dimensions and tables are not modelled yet, which is reported as a warning.
 - **Board colour** (`color`): the substrate colour, `"#rrggbb"` (or `"#rgb"`) or `[r, g, b]`. The default is solder-mask green.
 
 ```json
@@ -68,7 +69,7 @@ The board file is untrusted input: its size (128 MB), token count, nesting, foot
 Not modelled yet:
 
 - **B-rep** boards (the mesh representation is the only one).
-- **Text** on copper or silkscreen; it is reported as one warning.
+- **Text boxes, dimensions and tables**: their text is not drawn; a board with them gets one warning.
 - **Inner copper layers**: tracks and zones on layers other than `F.Cu` are drawn with the back copper, and pads that exist only on inner layers are skipped. There is no stackup, layer thickness or dielectric model.
 - **Copper holes**: drills are cut from the substrate only.
 - **Other footprint layers**: only `Edge.Cuts` graphics inside a footprint join the outline; courtyard, fab and other layers are ignored.

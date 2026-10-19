@@ -32,7 +32,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.insert_kicad", "Insert KiCad PCB", insert_kicad)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .kicad_pro project or .kicad_pcb board (imports the board substrate — outline, cutouts and drilled holes — and referenced STEP/VRML models as mesh bodies in a structured component; a project resolves to its same-stem board); name?; thickness?: finite board thickness in mm (default from the board); components?: bool (default: true: load the referenced 3D models); copper?: bool (default: false: build the front and back copper); pads?: bool (default: true, with copper); silkscreen?: bool (default: true); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (B-rep is not supported yet; mesh is the default)"),
+        .params("path: .kicad_pro project or .kicad_pcb board (imports the board substrate — outline, cutouts and drilled holes — and referenced STEP/VRML models as mesh bodies in a structured component; a project resolves to its same-stem board); name?; thickness?: finite board thickness in mm (default from the board); components?: bool (default: true: load the referenced 3D models); copper?: bool (default: false: build the front and back copper and copper text); pads?: bool (default: true, with copper); silkscreen?: bool (default: true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (B-rep is not supported yet; mesh is the default)"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")

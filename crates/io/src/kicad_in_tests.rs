@@ -220,6 +220,80 @@ fn vrml_models_are_read_and_placed() {
 }
 
 #[test]
+fn text_on_silk_and_copper_is_built_and_mirrored_text_flips() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start -10 -10) (end 10 10) (layer "Edge.Cuts"))
+      (footprint "text" (layer "F.Cu") (at 0 0)
+        (fp_text reference "AB" (at 0 0) (layer "F.SilkS")
+          (effects (font (size 2 2) (thickness 0.2)))))
+      (gr_text "AB" (at 0 0) (layer "B.SilkS")
+        (effects (font (size 2 2) (thickness 0.2)) (justify mirror)))
+      (gr_text "CU" (at 0 4) (layer "F.Cu")
+        (effects (font (size 2 2) (thickness 0.2)))))"#;
+    let options = KicadOptions { copper: true, silkscreen: true, components: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "text.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    let find = |name: &str| meshes.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} is missing"));
+    let front = bounds(find("Silkscreen F.SilkS"));
+    let back = bounds(find("Silkscreen B.SilkS"));
+    let copper = bounds(find("Copper F.Cu"));
+    assert!(front[2] > front[0] && front[3] > front[1], "{front:?}");
+    assert!(copper[2] > copper[0] && copper[3] > copper[1], "{copper:?}");
+    assert!((back[0] + front[2]).abs() < 1e-6 && (back[2] + front[0]).abs() < 1e-6, "mirrored: {front:?} {back:?}");
+}
+
+fn bounds(mesh: &solidcraft_doc::MeshData) -> [f64; 4] {
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for point in mesh.positions.as_chunks::<3>().0 {
+        min_x = min_x.min(point[0]);
+        min_y = min_y.min(point[1]);
+        max_x = max_x.max(point[0]);
+        max_y = max_y.max(point[1]);
+    }
+    [min_x, min_y, max_x, max_y]
+}
+
+#[test]
+fn hidden_text_is_skipped_and_text_boxes_are_warned_about() {
+    let hidden = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (gr_text "AB" (at 10 5) (layer "F.SilkS") hide
+        (effects (font (size 2 2) (thickness 0.2)))))"#;
+    let mut load = |_: &str| Err("not used".to_string());
+    let options = KicadOptions { silkscreen: true, components: false, ..Default::default() };
+    let imported = read_kicad(hidden.as_bytes(), "hidden.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    assert_eq!(meshes.len(), 1, "hidden text builds nothing");
+    assert!(imported.feature.warnings.is_empty(), "{:?}", imported.feature.warnings);
+
+    let boxes = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (gr_text_box "AB" (start 2 2) (end 10 5) (layer "F.SilkS")
+        (effects (font (size 1 1) (thickness 0.15)))))"#;
+    let imported = read_kicad(boxes.as_bytes(), "boxes.kicad_pcb", &options, &mut load).unwrap();
+    assert!(imported.feature.warnings.iter().any(|w| w.contains("text boxes")), "{:?}", imported.feature.warnings);
+}
+
+#[test]
+fn modern_property_fields_on_a_text_layer_are_text() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start -10 -10) (end 10 10) (layer "Edge.Cuts"))
+      (footprint "field" (layer "F.Cu") (at 0 0)
+        (property "Reference" "R1" (at 0 -3) (layer "F.SilkS")
+          (effects (font (size 1 1) (thickness 0.15))))
+        (property "Value" "10k" (at 0 3) (layer "F.Fab")
+          (effects (font (size 1 1) (thickness 0.15))))
+        (property "Footprint" "R_0603")))"#;
+    let board = parse_kicad_board(source.as_bytes(), "fields.kicad_pcb").unwrap();
+    let [footprint] = board.footprints.as_slice() else { panic!("expected one footprint") };
+    assert_eq!(footprint.texts.len(), 1, "{:?}", footprint.texts);
+    assert_eq!(footprint.texts[0].text, "R1");
+    assert_eq!(footprint.texts[0].layer, "F.SilkS");
+    assert_eq!(footprint.texts[0].at, [0.0, -3.0, 0.0]);
+}
+
+#[test]
 fn b_rep_is_refused_with_a_clear_message() {
     let options = KicadOptions { representation: KicadRepresentation::Brep, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());

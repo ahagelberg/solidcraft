@@ -177,7 +177,7 @@ rebuild with no errors, replayed here at 2× speed.
   `.FCStd` and Rhino `.3dm` solids import the same way through
   [cadmpeg](https://github.com/cadmpeg/cadmpeg) in the desktop app and CLI; KiCad boards
   (`.kicad_pcb`/`.kicad_pro`) import their substrate, footprint STEP/VRML models and optional
-  copper and silkscreen ([docs/kicad-import.md](docs/kicad-import.md)).
+  copper, silkscreen and text ([docs/kicad-import.md](docs/kicad-import.md)).
 - **Render:** opaque surfaces can use metal fraction, roughness and dielectric IOR in the
   integrated product viewport and CPU preview PNGs. Existing simple colors remain supported.
   Fixed direct lighting is a preview; HDRI, refraction and texture maps are not implemented.
