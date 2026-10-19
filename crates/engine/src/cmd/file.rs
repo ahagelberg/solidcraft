@@ -32,7 +32,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.insert_kicad", "Insert KiCad PCB", insert_kicad)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .kicad_pro project or .kicad_pcb board (imports the board substrate and referenced STEP models as mesh bodies in a structured component; a project resolves to its same-stem board); name?; thickness?: finite board thickness in mm (default from the board)"),
+        .params("path: .kicad_pro project or .kicad_pcb board (imports the board substrate — outline, cutouts and drilled holes — and referenced STEP/VRML models as mesh bodies in a structured component; a project resolves to its same-stem board); name?; thickness?: finite board thickness in mm (default from the board); components?: bool (default: true: load the referenced 3D models); copper?: bool (default: false: build the front and back copper); pads?: bool (default: true, with copper); silkscreen?: bool (default: true); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (B-rep is not supported yet; mesh is the default)"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")
@@ -238,7 +238,74 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
-fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, thickness: Option<f64>) -> Result<Value> {
+/// The KiCad import options a command's parameters name.
+fn kicad_options(p: &Value, cmd: &str) -> Result<solidcraft_io::KicadOptions> {
+    let mut options = solidcraft_io::KicadOptions::default();
+    if let Some(v) = p.get("thickness").filter(|v| !v.is_null()) {
+        let value = v.as_f64().ok_or_else(|| bad(cmd, "`thickness` must be a finite number"))?;
+        if !value.is_finite() || value <= 0.0 || value > 1000.0 {
+            return Err(bad(cmd, "`thickness` must be greater than 0 and at most 1000 mm"));
+        }
+        options.thickness = Some(value);
+    }
+    for (key, slot) in [
+        ("components", &mut options.components),
+        ("copper", &mut options.copper),
+        ("pads", &mut options.pads),
+        ("silkscreen", &mut options.silkscreen),
+    ] {
+        if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+            *slot = v.as_bool().ok_or_else(|| bad(cmd, format!("`{key}` must be true or false")))?;
+        }
+    }
+    if let Some(v) = p.get("color").filter(|v| !v.is_null()) {
+        options.color = Some(parse_kicad_color(v).ok_or_else(|| bad(cmd, "`color` must be \"#rrggbb\" or [r, g, b] with values 0-255"))?);
+    }
+    if let Some(v) = p.get("representation").or(p.get("mode")).filter(|v| !v.is_null()) {
+        let name = v.as_str().ok_or_else(|| bad(cmd, "`representation` must be \"mesh\" or \"brep\""))?;
+        options.representation =
+            solidcraft_io::KicadRepresentation::parse(name).ok_or_else(|| bad(cmd, "`representation` must be \"mesh\" or \"brep\""))?;
+        if options.representation == solidcraft_io::KicadRepresentation::Brep {
+            return Err(EngineError::Other("not supported yet: B-rep KiCad imports (choose mesh)".into()));
+        }
+    }
+    Ok(options)
+}
+
+fn parse_kicad_color(v: &Value) -> Option<[u8; 3]> {
+    if let Some(s) = v.as_str() {
+        let hex = s.trim().trim_start_matches('#');
+        let expand = |c: u8| (c >> 4) * 17;
+        return match hex.len() {
+            3 => Some([
+                expand(u8::from_str_radix(hex.get(0..1)?, 16).ok()?),
+                expand(u8::from_str_radix(hex.get(1..2)?, 16).ok()?),
+                expand(u8::from_str_radix(hex.get(2..3)?, 16).ok()?),
+            ]),
+            6 => Some([
+                u8::from_str_radix(hex.get(0..2)?, 16).ok()?,
+                u8::from_str_radix(hex.get(2..4)?, 16).ok()?,
+                u8::from_str_radix(hex.get(4..6)?, 16).ok()?,
+            ]),
+            _ => None,
+        };
+    }
+    let values = v.as_array()?;
+    if values.len() != 3 {
+        return None;
+    }
+    let mut out = [0u8; 3];
+    for (i, value) in values.iter().enumerate() {
+        let n = value.as_f64()?;
+        if !n.is_finite() || !(0.0..=255.0).contains(&n) {
+            return None;
+        }
+        out[i] = n.round() as u8;
+    }
+    Some(out)
+}
+
+fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcraft_io::KicadOptions) -> Result<Value> {
     let board_path = solidcraft_io::kicad_board_path(std::path::Path::new(path)).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let board_path = board_path.to_string_lossy();
     let bytes =
@@ -246,10 +313,11 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, thickness: Option<
     let model_dir = std::path::Path::new(board_path.as_ref()).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
     let mut load = |model: &str| {
         let resolved = resolve_kicad_model_path(model, &model_dir).map_err(|e| e.to_string())?;
-        solidcraft_io::vfs::read(&resolved, solidcraft_io::MAX_STEP_BYTES).map_err(|e| format!("{resolved}: {e}"))
+        let limit = if solidcraft_io::is_vrml_path(&resolved) { solidcraft_io::MAX_VRML_BYTES } else { solidcraft_io::MAX_STEP_BYTES };
+        solidcraft_io::vfs::read(&resolved, limit).map_err(|e| format!("{resolved}: {e}"))
     };
     let imported =
-        solidcraft_io::read_kicad(&bytes, &board_path, thickness, &mut load).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
+        solidcraft_io::read_kicad(&bytes, &board_path, options, &mut load).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
     let feature = imported.feature;
     let feature_name = name.filter(|n| !n.trim().is_empty()).unwrap_or(&feature.name).to_string();
     let component_name = import::component_name(path, name);
@@ -327,17 +395,8 @@ fn insert_kicad(s: &mut Session, p: &Value) -> Result<Value> {
     if !solidcraft_io::is_kicad_path(path) {
         return Err(bad(cmd, "only KiCad project or PCB files (.kicad_pro, .kicad_pcb) can be inserted"));
     }
-    let thickness = match p.get("thickness") {
-        None | Some(Value::Null) => None,
-        Some(_) => {
-            let value = num(p, "thickness").ok_or_else(|| bad(cmd, "`thickness` must be a finite number"))?;
-            if value <= 0.0 || value > 1000.0 {
-                return Err(bad(cmd, "`thickness` must be greater than 0 and at most 1000 mm"));
-            }
-            Some(value)
-        }
-    };
-    add_kicad(s, path, str_(p, "name"), thickness)
+    let options = kicad_options(p, cmd)?;
+    add_kicad(s, path, str_(p, "name"), &options)
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
@@ -363,7 +422,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
         let r = if solidcraft_io::is_kicad_path(path) {
-            add_kicad(&mut fresh, path, None, None)?
+            add_kicad(&mut fresh, path, None, &kicad_options(p, "doc.open")?)?
         } else if solidcraft_io::is_step_path(path) {
             add_step(&mut fresh, path, None, &step_options(p, "doc.open")?)?
         } else {

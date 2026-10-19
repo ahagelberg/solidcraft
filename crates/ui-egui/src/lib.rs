@@ -74,6 +74,7 @@ pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
+pub mod kicad_import_dialog;
 pub mod local_time;
 mod material_card_review;
 #[cfg(test)]
@@ -423,6 +424,8 @@ pub struct SolveApp {
     pub designs: designs_panel::State,
     /// The repository's own Save As window, when it is open.
     pub save_to_repo: Option<designs_save::Dialog>,
+    /// The KiCad import settings window, when a board was chosen.
+    pub kicad_import: Option<kicad_import_dialog::Dialog>,
     /// A version question waiting for its answer (opening an old version, saving over later ones).
     pub version_prompt: Option<designs_versions::Prompt>,
     /// The user agreed to delete the versions after the one being saved.
@@ -519,6 +522,7 @@ impl SolveApp {
             flat_view: Default::default(),
             designs: designs_panel::State::default(),
             save_to_repo: None,
+            kicad_import: None,
             version_prompt: None,
             save_discards_later: false,
             home: home::HomeState::default(),
@@ -822,7 +826,16 @@ impl SolveApp {
             });
             return;
         }
-        if matches!(id, "file.insert_step" | "file.insert_mesh" | "file.insert_kicad") {
+        if id == "file.insert_kicad" {
+            // The board is chosen first; its import settings are asked for next.
+            self.pick_open(|app, path| {
+                if let Some(path) = path {
+                    kicad_import_dialog::open(app, &path);
+                }
+            });
+            return;
+        }
+        if matches!(id, "file.insert_step" | "file.insert_mesh") {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
                     app.insert_path_async(&path);
@@ -1072,6 +1085,15 @@ impl SolveApp {
         file_load::begin(self, path, true);
     }
 
+    /// Insert a file with import options (a KiCad board's settings), off the window thread.
+    pub fn insert_path_async_with_options(&mut self, path: &str, options: serde_json::Value) {
+        let mut request = file_load::Request::new(path, file_load::Kind::Insert);
+        if let Some(map) = options.as_object() {
+            request.options = map.clone();
+        }
+        let _ = file_load::begin_request(self, request);
+    }
+
     /// Insert a STEP file's bodies (an Import base feature) or a mesh file's meshes into the
     /// current design.
     pub fn insert_path(&mut self, path: &str) {
@@ -1092,8 +1114,9 @@ impl SolveApp {
         }
     }
 
-    /// A dropped file: a design becomes a component of the open design, a STEP or mesh file is
-    /// inserted the same way, and anything else is refused with a message (Home opens files).
+    /// A dropped file: a design becomes a component of the open design, a STEP, mesh or KiCad
+    /// file is inserted the same way, and anything else is refused with a message (Home opens
+    /// files).
     pub fn drop_path(&mut self, path: &str) {
         crate::designs_panel::drop_path(self, path);
     }
@@ -1428,6 +1451,7 @@ impl SolveApp {
         toolbar::app_bar(self, ui);
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
+        kicad_import_dialog::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         designs_save::show(self, ui.ctx());
         designs_versions::show(self, ui.ctx());

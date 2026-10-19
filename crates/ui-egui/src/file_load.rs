@@ -278,7 +278,11 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
     let options = if kind == Kind::ExportDxf {
         params.and_then(Value::as_object).cloned().unwrap_or_default()
     } else {
-        ["up", "names"].iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect()
+        let mut keys: Vec<&str> = vec!["up", "names"];
+        if solidcraft_engine::io::is_kicad_path(path) {
+            keys.extend(["thickness", "components", "copper", "pads", "silkscreen", "color", "representation", "mode"]);
+        }
+        keys.iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect()
     };
     let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options });
     None

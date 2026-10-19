@@ -1149,7 +1149,7 @@ fn insert_design(app: &mut SolveApp, path: &str) {
             Ok(_) => app.fit_view(),
             Err(e) => app.set_status(e, true),
         }
-    } else if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) {
+    } else if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) || solidcraft_engine::io::is_kicad_path(path) {
         app.insert_path_async(path);
     } else {
         app.set_status(crate::i18n::tr("designs.drop_unknown").to_string(), true);

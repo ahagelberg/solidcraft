@@ -41,13 +41,16 @@ mod gltf_in;
 pub use gltf_in::{GltfImport, Loader, MAX_GLTF_BYTES, MeshPlan, PlanPlace, glb_container, is_gltf_path, read_gltf};
 mod kicad_in;
 pub use kicad_in::{
-    KicadBoard, KicadFootprint, KicadImport, KicadLoader, KicadModel, MAX_KICAD_BYTES, is_kicad_path, kicad_board_mesh, kicad_board_path,
-    parse_kicad_board, read_kicad,
+    DEFAULT_BOARD_COLOR, KicadBoard, KicadDrill, KicadFootprint, KicadImport, KicadLoader, KicadModel, KicadOptions, KicadPad, KicadRepresentation,
+    KicadStroke, KicadVia, KicadZone, MAX_KICAD_BYTES, is_kicad_path, kicad_board_mesh, kicad_board_path, parse_kicad_board, parse_kicad_board_with,
+    read_kicad,
 };
 mod obj;
 pub use obj::read_obj;
 pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf, weld, write_3mf, write_3mf_with};
 pub use urdf::{UrdfOptions, UrdfPackage, urdf};
+mod vrml_in;
+pub use vrml_in::{MAX_VRML_BYTES, VrmlMesh, is_vrml_path, read_vrml};
 
 use solidcraft_doc::{Document, Metadata, ModelState};
 use solidcraft_geom::{Mesh, Vec3};
