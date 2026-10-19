@@ -794,7 +794,7 @@ fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &Desig
 /// The row's version selector (`V3`), like a file browser's: it lists the versions, newest first,
 /// and opens one (the current one opens at once; an older one asks first).
 fn version_button(ui: &mut egui::Ui, row: egui::Rect, design: &DesignRow, actions: &mut Vec<Action>) {
-    let rect = egui::Rect::from_center_size(pos2(row.right() - 27.0, row.top() + 20.0), vec2(46.0, 18.0));
+    let rect = egui::Rect::from_center_size(pos2(row.right() - 27.0, row.bottom() - 10.0), vec2(46.0, 18.0));
     let button = ui.put(rect, egui::Button::new(RichText::new(format!("V{} ▾", design.versions)).size(11.0)).small());
     crate::scenario::publish_handle(&format!("designs:versions:{}", design.name), button.rect.center());
     crate::scenario::publish_count(&format!("designs:version:{}", design.name), f64::from(design.versions));
