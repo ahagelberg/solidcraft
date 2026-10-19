@@ -1,4 +1,4 @@
-//! Documents and files: new, open (designs and STEP), insert STEP, save, export.
+//! Documents and files: new, open designs and imports, save, export.
 
 #[path = "file_thumbnail.rs"]
 mod thumbnail;
@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -29,6 +29,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "INSERT")
         .icon("import")
         .params("path: .3mf, .stl, .obj, .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept)"),
+    CommandSpec::new("file.insert_kicad", "Insert KiCad PCB", insert_kicad)
+        .at("SOLID", "INSERT")
+        .icon("import")
+        .params("path: .kicad_pro project or .kicad_pcb board (imports the board substrate and referenced STEP models as mesh bodies in a structured component; a project resolves to its same-stem board); name?; thickness?: finite board thickness in mm (default from the board)"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")
@@ -234,6 +238,108 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
+fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, thickness: Option<f64>) -> Result<Value> {
+    let board_path = solidcraft_io::kicad_board_path(std::path::Path::new(path)).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let board_path = board_path.to_string_lossy();
+    let bytes =
+        solidcraft_io::vfs::read(&board_path, solidcraft_io::MAX_KICAD_BYTES).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
+    let model_dir = std::path::Path::new(board_path.as_ref()).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let mut load = |model: &str| {
+        let resolved = resolve_kicad_model_path(model, &model_dir).map_err(|e| e.to_string())?;
+        solidcraft_io::vfs::read(&resolved, solidcraft_io::MAX_STEP_BYTES).map_err(|e| format!("{resolved}: {e}"))
+    };
+    let imported =
+        solidcraft_io::read_kicad(&bytes, &board_path, thickness, &mut load).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
+    let feature = imported.feature;
+    let feature_name = name.filter(|n| !n.trim().is_empty()).unwrap_or(&feature.name).to_string();
+    let component_name = import::component_name(path, name);
+    let tree = if imported.plan.places.is_empty() { import::Tree::Flat } else { import::Tree::Mesh(&imported.plan) };
+    let (id, placed) = import::add_in_component(s, feature.kind, &feature_name, feature.body_names, &component_name, tree)?;
+    let bodies = created_bodies(s, id);
+    let mut out = json!({"path": path, "board_path": board_path, "feature": id, "name": feature_name, "bodies": bodies, "created_bodies": bodies, "warnings": feature.warnings});
+    placed.report(&mut out);
+    Ok(out)
+}
+
+fn resolve_kicad_model_path(path: &str, model_dir: &std::path::Path) -> std::io::Result<String> {
+    let mut expanded = String::with_capacity(path.len());
+    let mut chars = path.chars().peekable();
+    while let Some(ch) = chars.next() {
+        let name = match ch {
+            '$' if chars.peek() == Some(&'{') => {
+                chars.next();
+                Some(read_kicad_env_name(&mut chars, '}')?)
+            }
+            '%' => Some(read_kicad_env_name(&mut chars, '%')?),
+            '$' => {
+                let mut name = String::new();
+                while chars.peek().is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_') {
+                    if let Some(c) = chars.next() {
+                        name.push(c);
+                    }
+                }
+                if name.is_empty() {
+                    expanded.push('$');
+                    continue;
+                }
+                Some(name)
+            }
+            _ => None,
+        };
+        if let Some(name) = name {
+            if name.is_empty() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty environment variable in model path"));
+            }
+            if name == "KIPRJMOD" {
+                expanded.push_str(&model_dir.to_string_lossy());
+            } else {
+                expanded.push_str(
+                    &std::env::var(&name)
+                        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, format!("unresolved environment variable `{name}`")))?,
+                );
+            }
+        } else {
+            expanded.push(ch);
+        }
+    }
+    let resolved = std::path::Path::new(&expanded);
+    let resolved = if resolved.is_absolute() { resolved.to_path_buf() } else { model_dir.join(resolved) };
+    Ok(resolved.to_string_lossy().into_owned())
+}
+
+fn read_kicad_env_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, delimiter: char) -> std::io::Result<String> {
+    let mut name = String::new();
+    for ch in chars.by_ref() {
+        if ch == delimiter {
+            if name.is_empty() {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty environment variable in model path"));
+            }
+            return Ok(name);
+        }
+        name.push(ch);
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "unterminated environment variable in model path"))
+}
+
+fn insert_kicad(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.insert_kicad";
+    let path = path_arg(p, cmd)?;
+    if !solidcraft_io::is_kicad_path(path) {
+        return Err(bad(cmd, "only KiCad project or PCB files (.kicad_pro, .kicad_pcb) can be inserted"));
+    }
+    let thickness = match p.get("thickness") {
+        None | Some(Value::Null) => None,
+        Some(_) => {
+            let value = num(p, "thickness").ok_or_else(|| bad(cmd, "`thickness` must be a finite number"))?;
+            if value <= 0.0 || value > 1000.0 {
+                return Err(bad(cmd, "`thickness` must be greater than 0 and at most 1000 mm"));
+            }
+            Some(value)
+        }
+    };
+    add_kicad(s, path, str_(p, "name"), thickness)
+}
+
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
     if !solidcraft_io::is_step_path(path) && p.get("names").is_some_and(|v| !v.is_null()) {
@@ -249,14 +355,16 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
                 .map_err(|_| bad("doc.open", "`version` is too large"))?,
         ),
     };
-    if version.is_some() && (solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path)) {
+    if version.is_some() && (solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) || solidcraft_io::is_kicad_path(path)) {
         return Err(bad("doc.open", "`version` applies to designs only"));
     }
-    if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
+    if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) || solidcraft_io::is_kicad_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solidcraft_io::is_step_path(path) {
+        let r = if solidcraft_io::is_kicad_path(path) {
+            add_kicad(&mut fresh, path, None, None)?
+        } else if solidcraft_io::is_step_path(path) {
             add_step(&mut fresh, path, None, &step_options(p, "doc.open")?)?
         } else {
             add_mesh(&mut fresh, path, None, mesh_up(p, path, "doc.open")?)?

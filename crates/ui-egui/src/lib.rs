@@ -822,7 +822,7 @@ impl SolveApp {
             });
             return;
         }
-        if matches!(id, "file.insert_step" | "file.insert_mesh") {
+        if matches!(id, "file.insert_step" | "file.insert_mesh" | "file.insert_kicad") {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
                     app.insert_path_async(&path);
@@ -1075,7 +1075,13 @@ impl SolveApp {
     /// Insert a STEP file's bodies (an Import base feature) or a mesh file's meshes into the
     /// current design.
     pub fn insert_path(&mut self, path: &str) {
-        let cmd = if solidcraft_engine::io::is_mesh_path(path) { "file.insert_mesh" } else { "file.insert_step" };
+        let cmd = if solidcraft_engine::io::is_kicad_path(path) {
+            "file.insert_kicad"
+        } else if solidcraft_engine::io::is_mesh_path(path) {
+            "file.insert_mesh"
+        } else {
+            "file.insert_step"
+        };
         let before: Vec<String> = self.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();

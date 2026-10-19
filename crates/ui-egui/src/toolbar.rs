@@ -513,6 +513,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     app.start("file.insert_mesh");
                     close = true;
                 }
+                if item_if(ui, "Insert KiCad PCB…", "", shown) {
+                    app.start("file.insert_kicad");
+                    close = true;
+                }
                 if item_if(ui, &format!("{}…", app.tr_label("Insert Design")), "", shown) {
                     app.start("component.insert_design");
                     close = true;

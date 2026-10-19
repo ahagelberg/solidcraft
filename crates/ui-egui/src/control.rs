@@ -120,7 +120,7 @@ const MAX_BATCH: usize = 10_000;
 /// Commands that load a file: through `engine.execute` they go to the app's file loader
 /// (`file_load::control`: off the window thread, with progress and Cancel), which a batch would
 /// bypass.
-const LOADS_A_FILE: [&str; 3] = ["doc.open", "file.insert_step", "file.insert_mesh"];
+const LOADS_A_FILE: [&str; 4] = ["doc.open", "file.insert_step", "file.insert_mesh", "file.insert_kicad"];
 
 /// `engine.batch {commands, rollback?, timings?, profile?}`: the steps in one request, so in one
 /// frame (#743). With `timings` the reply adds each step's time and `total_ms`, with `profile`
