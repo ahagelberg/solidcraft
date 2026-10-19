@@ -284,6 +284,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         }
         "engine.commands" => wrap(app.session.execute("engine.commands", &json!({})).map_err(|e| e.to_string())),
         "document.inspect" => wrap(app.session.execute("document.inspect", p).map_err(|e| e.to_string())),
+        "ui.messages" => ok(crate::messages::control(app, p)),
         "ui.inspect" => ok(json!({
             "ui": serde_json::to_value(&app.ui).unwrap_or_default(),
             "visibility": app.session.visibility,

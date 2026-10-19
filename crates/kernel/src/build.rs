@@ -1,7 +1,7 @@
 //! Building bodies: extrude and revolve planar regions, primitives.
 
 use mt::builder;
-use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Grid, Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
@@ -633,23 +633,97 @@ fn offset_loop(lp: &Loop2, d: f64) -> Result<Vec<Option<Seg2>>> {
     }
     let all_arcs = lp.segs.iter().all(|s| matches!(s, Seg2::Arc { .. }));
     if all_arcs {
-        return lp
+        let moved = lp
             .segs
             .iter()
             .map(|s| match *s {
                 Seg2::Arc { center, radius, start, sweep } => {
                     let r = radius + sweep.signum() * d;
                     if r > 1e-6 {
-                        Ok(Some(Seg2::Arc { center, radius: r, start, sweep }))
+                        Ok(Seg2::Arc { center, radius: r, start, sweep })
                     } else {
                         Err(KernelError::Invalid("the taper closes the profile".into()))
                     }
                 }
                 _ => Err(KernelError::Failed("taper: profile loop".into())),
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
+        return arc_corners(lp, moved).map(|arcs| arcs.into_iter().map(Some).collect());
     }
     offset_segments(lp, d)
+}
+
+/// The moved arcs of an all-arc loop made to meet again: where two arcs of different circles meet
+/// at a corner (a circle and the lobes on its sides), their moved circles no longer cross at the
+/// arcs' old end angles, so the corner goes to where the moved circles cross, nearest the old
+/// corner, and both arcs are cut there. Arcs meeting tangentially (or on one circle) keep their
+/// angles: moved along their shared normal, they still meet.
+fn arc_corners(lp: &Loop2, moved: Vec<Seg2>) -> Result<Vec<Seg2>> {
+    let bad = || KernelError::Failed("taper: profile loop".into());
+    let closes = || KernelError::Invalid("the taper closes the profile".into());
+    let n = moved.len();
+    // Each arc's start and end angle once moved.
+    let mut ang: Vec<(f64, f64)> = moved
+        .iter()
+        .map(|s| match *s {
+            Seg2::Arc { start, sweep, .. } => Ok((start, start + sweep)),
+            _ => Err(bad()),
+        })
+        .collect::<Result<_>>()?;
+    for i in 0..n {
+        let k = (i + n - 1) % n;
+        let (Some(prev), Some(this), Some(Seg2::Arc { center: c1, radius: r1, .. }), Some(Seg2::Arc { center: c2, radius: r2, .. })) =
+            (lp.segs.get(k), lp.segs.get(i), moved.get(k).copied(), moved.get(i).copied())
+        else {
+            return Err(bad());
+        };
+        let (tin, tout) = (prev.end_tangent(), this.start_tangent());
+        if tin.cross(tout).abs() < 1e-6 && tin.dot(tout) > 0.0 {
+            continue;
+        }
+        let x = circles_cross(c1, r1, c2, r2, this.start()).ok_or_else(|| {
+            KernelError::Failed("not supported yet: a taper this steep for arcs meeting at a corner (their moved circles part)".into())
+        })?;
+        if let Some(a) = ang.get_mut(k) {
+            a.1 = (x - c1).angle();
+        }
+        if let Some(a) = ang.get_mut(i) {
+            a.0 = (x - c2).angle();
+        }
+    }
+    moved
+        .iter()
+        .zip(&ang)
+        .map(|(s, &(a0, a1))| match *s {
+            Seg2::Arc { center, radius, sweep, .. } => {
+                // The same turning sense, the whole-turn equivalent nearest the old sweep.
+                let tau = std::f64::consts::TAU;
+                let mut sw = a1 - a0;
+                sw += ((sweep - sw) / tau).round() * tau;
+                if sw * sweep <= 0.0 || sw.abs() < 1e-9 {
+                    return Err(closes());
+                }
+                Ok(Seg2::Arc { center, radius, start: a0, sweep: sw })
+            }
+            _ => Err(bad()),
+        })
+        .collect()
+}
+
+/// Where the circles (`c1`, `r1`) and (`c2`, `r2`) cross, the crossing nearest `near`; `None`
+/// when they don't (apart, one inside the other, or concentric).
+fn circles_cross(c1: Vec2, r1: f64, c2: Vec2, r2: f64, near: Vec2) -> Option<Vec2> {
+    let d = c1.dist(c2);
+    if d < 1e-12 || d > r1 + r2 + 1e-9 || d < (r1 - r2).abs() - 1e-9 {
+        return None;
+    }
+    let u = (c2 - c1) * (1.0 / d);
+    let a = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
+    let h = (r1 * r1 - a * a).max(0.0).sqrt();
+    let base = c1 + u * a;
+    let (p, q) = (base + u.perp() * h, base - u.perp() * h);
+    let x = if p.dist(near) <= q.dist(near) { p } else { q };
+    x.is_finite().then_some(x)
 }
 
 /// Where the line through `p` along `tin` and the one through `q` along `tout` meet once each
@@ -2153,6 +2227,36 @@ pub(crate) fn interpolate_cubic(pts: &[Vec3]) -> Option<mt::BSplineCurve<mt::Poi
     let m = pts.len();
     let u: Vec<f64> = (0..m).map(|i| i as f64 / (m.max(2) - 1) as f64).collect();
     interpolate_cubic_at(pts, &u)
+}
+
+/// A cubic B-spline surface through a grid of samples at uniform parameters: cubics across v
+/// through each u index's samples, then cubics across u through their control points.
+pub(crate) struct NetFit {
+    pub surface: mt::BSplineSurface<mt::Point3>,
+    /// The surface's edges at the first and the last u (curves across v).
+    pub u_ends: [mt::BSplineCurve<mt::Point3>; 2],
+    /// The surface's edges at the first and the last v (curves across u).
+    pub v_ends: [mt::BSplineCurve<mt::Point3>; 2],
+}
+
+/// [`NetFit`] through `samples`; `None` with fewer than four samples across either direction.
+pub(crate) fn interpolate_net(samples: &Grid<Vec3>) -> Option<NetFit> {
+    let across_v: Vec<mt::BSplineCurve<mt::Point3>> = samples.transposed().lines().map(interpolate_cubic).collect::<Option<_>>()?;
+    let across_u: Vec<mt::BSplineCurve<mt::Point3>> =
+        control_net(&across_v)?.lines().map(|run| interpolate_cubic(&run.iter().map(|&p| from_p3(p)).collect::<Vec<_>>())).collect::<Option<_>>()?;
+    let net = control_net(&across_u)?.transposed().into_u_rows();
+    let knots = (across_u.first()?.knot_vec().clone(), across_v.first()?.knot_vec().clone());
+    let surface = mt::BSplineSurface::try_new(knots, net).ok()?;
+    let u_ends = [across_v.first()?.clone(), across_v.last()?.clone()];
+    let v_ends = [across_u.first()?.clone(), across_u.last()?.clone()];
+    Some(NetFit { surface, u_ends, v_ends })
+}
+
+/// The control points of `curves` as a grid: value `(i, j)` is control point `j` of curve `i`.
+/// `None` unless every curve has as many control points.
+fn control_net(curves: &[mt::BSplineCurve<mt::Point3>]) -> Option<Grid<mt::Point3>> {
+    let rows: Vec<&[mt::Point3]> = curves.iter().map(|c| c.control_points().as_slice()).collect();
+    Grid::from_u_rows(&rows)
 }
 
 /// [`interpolate_cubic`] by chord length: the parameters (0 to 1) in proportion to the distance

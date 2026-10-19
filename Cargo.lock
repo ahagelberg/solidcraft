@@ -4314,6 +4314,9 @@ dependencies = [
 [[package]]
 name = "solidcraft-space-mouse"
 version = "0.16.2"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "solidcraft-ui-egui"
@@ -4334,6 +4337,7 @@ dependencies = [
  "sha2 0.10.9",
  "solidcraft-engine",
  "solidcraft-gpu",
+ "solidcraft-space-mouse",
  "sys-locale",
  "tiny-skia",
  "toml",

@@ -1196,6 +1196,18 @@ fn boolean_whole_with_refinement(a: &Body, b: &Body, op: BoolOp, refine: bool) -
                 return Ok(Some(body));
             }
         }
+        // A lens cut from a sphere's projected outline carries a redundant cylinder
+        // tangent to the sphere (#2750). Remove it only after proving that it
+        // encloses the entire target, keeping the other wall and both caps exact.
+        if attempt == 1 && op == BoolOp::Cut {
+            let (lens, diagnostics) = capture_boolean_diagnostics(|| crate::sphere_lens::cut(a, b, &boolean_whole));
+            if let Some(Ok(result)) = lens
+                && result.as_ref().is_none_or(|body| check(body).0)
+            {
+                merge(diagnostics);
+                return Ok(result);
+            }
+        }
         // A whole turn of a cylinder or cone bounded by one wire along its seam (as STEP files
         // write them) can't be divided by a loop lying inside it, and the tries below end in a
         // nudged tool, or fail: the same boolean with such faces in two halves, which is exact.
@@ -1503,13 +1515,19 @@ pub(crate) fn truck_boolean(a: &Body, b: &Body, op: BoolOp, shift: Option<mt::Ve
             sb = mt::builder::translated(&sb, shift);
         }
         let tool_edges = (op == BoolOp::Cut).then(|| record::edge_origins(&sb, 1));
+        // A body that keeps its meshes is meshed once for all its booleans at this tolerance.
+        let meshed = shift.is_none().then(|| a.boolean_meshes(tol)).flatten();
+        let and = |sa: &Solid, sb: &Solid| match &meshed {
+            Some(m) => truck_shapeops::and_with_history_meshed(sa, m, sb, tol),
+            None => truck_shapeops::and_with_history(sa, sb, tol),
+        };
         let res = match op {
             BoolOp::Union => truck_shapeops::or_with_history(&sa, &sb, tol),
             BoolOp::Cut => {
                 sb.not();
-                truck_shapeops::and_with_history(&sa, &sb, tol)
+                and(&sa, &sb)
             }
-            BoolOp::Intersect => truck_shapeops::and_with_history(&sa, &sb, tol),
+            BoolOp::Intersect => and(&sa, &sb),
         };
         let (s, h) = res.ok_or_else(|| KernelError::Failed("no result".into()))?;
         let h = h.and_then(|h| recorded::shapeops(&h, &sb, tool_edges.as_ref()));

@@ -20,8 +20,9 @@ macro_rules! planned {
     };
 }
 
+mod bom;
 mod browser;
-mod clearance;
+pub(crate) mod clearance;
 mod clipboard;
 mod compare;
 mod component;
@@ -36,10 +37,12 @@ mod face;
 mod features;
 mod features_more;
 pub use features::{auto_operation, extrude_reach};
+pub use sketch_modify::trim_piece;
 mod component_link;
 mod config;
 mod file;
 mod inspect;
+mod interference;
 pub(crate) mod joints;
 mod libraries;
 mod material_properties;
@@ -260,6 +263,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(motion::COMMANDS.iter());
     v.extend(config::COMMANDS.iter());
     v.extend(parts::COMMANDS.iter());
+    v.extend(bom::COMMANDS.iter());
     v.extend(browser::COMMANDS.iter());
     v.extend(delete::COMMANDS.iter());
     v.extend(designs::COMMANDS.iter());

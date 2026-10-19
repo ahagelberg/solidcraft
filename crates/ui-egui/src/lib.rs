@@ -11,6 +11,7 @@
 pub mod access;
 pub mod agent_chat;
 pub mod agent_cursor;
+pub mod bom_panel;
 pub mod browser;
 pub mod canvas;
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub mod dialogs_coupling;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
+pub mod dialogs_part_size;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_save_mesh;
@@ -75,12 +77,14 @@ pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
 pub mod kicad_import_dialog;
+mod linked_source;
 pub mod local_time;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
+pub mod messages;
 #[cfg(test)]
 mod pattern_arrow_tests;
 #[cfg(test)]
@@ -182,6 +186,7 @@ pub mod smart_extrude;
 #[cfg(test)]
 mod smart_extrude_ui_tests;
 pub mod space_mouse;
+pub mod space_mouse_calibration;
 pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
@@ -192,6 +197,7 @@ mod thin_extrude_tests;
 pub mod timeline;
 pub mod timeline_left;
 pub mod titlebar;
+pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
@@ -327,6 +333,8 @@ pub struct SolveApp {
     pub params: Option<params_dialog::ParamsDialog>,
     /// The Design Properties window, when open.
     pub design_properties: Option<design_properties::DesignProperties>,
+    /// The Bill of Materials window, when open.
+    pub bom: Option<bom_panel::BomPanel>,
     material_card_review: Option<material_card_review::ReviewWindow>,
     pub palette: palette::Palette,
     /// Context menus, rename box and Properties window.
@@ -339,6 +347,8 @@ pub struct SolveApp {
     pub keymap: keymap::Keymap,
     /// The Help menu and the About window.
     pub help: help::HelpState,
+    /// Every status message of this run, for the Messages window ([`messages`], #2763).
+    pub messages: messages::Messages,
     /// An editable local issue draft and optional captured app frame.
     pub issue_report: issue_report::ReportState,
     /// The Crash Reports window.
@@ -431,6 +441,8 @@ pub struct SolveApp {
     /// The user agreed to delete the versions after the one being saved.
     pub save_discards_later: bool,
     pub home: home::HomeState,
+    /// The 3D mouse: which device, its reading, and the calibration window.
+    pub space_mouse: space_mouse::Input,
     pub file_load: file_load::FileLoad,
     /// The other open designs (tabs).
     pub docs: documents::Documents,
@@ -468,6 +480,7 @@ impl SolveApp {
             dialog: None,
             params: None,
             design_properties: None,
+            bom: None,
             material_card_review: None,
             palette: palette::Palette::default(),
             menu: context_menu::MenuState::default(),
@@ -475,6 +488,7 @@ impl SolveApp {
             sbox: shortcut_box::ShortcutBox::default(),
             keymap: keymap::Keymap::default(),
             help: help::HelpState::default(),
+            messages: messages::Messages::default(),
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
             updater: update::Updater::default(),
@@ -526,6 +540,7 @@ impl SolveApp {
             version_prompt: None,
             save_discards_later: false,
             home: home::HomeState::default(),
+            space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
@@ -832,6 +847,10 @@ impl SolveApp {
             self.pick_open_file();
             return;
         }
+        if id == "component.relink" {
+            linked_source::start_selected(self);
+            return;
+        }
         if matches!(id, "file.insert_step" | "file.insert_mesh") {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
@@ -852,6 +871,10 @@ impl SolveApp {
         }
         if matches!(id, "document.metadata" | "document.metadata.set") {
             design_properties::open(self);
+            return;
+        }
+        if id == "assembly.bom" {
+            bom_panel::open(self);
             return;
         }
         if id == "sketch.finish" {
@@ -1057,7 +1080,9 @@ impl SolveApp {
     }
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
-        self.status = Some((s.into(), now_ms(), error));
+        let (text, at) = (s.into(), now_ms());
+        self.messages.push(&text, error, at);
+        self.status = Some((text, at, error));
     }
 
     pub fn open_path(&mut self, path: &str) {
@@ -1525,6 +1550,7 @@ impl SolveApp {
         self.resolve_fit(ui.ctx());
         params_dialog::show(self, ui.ctx());
         design_properties::show(self, ui.ctx());
+        bom_panel::show(self, ui.ctx());
         material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
