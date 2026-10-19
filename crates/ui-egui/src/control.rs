@@ -97,7 +97,7 @@ fn key_from(name: &str) -> Option<egui::Key> {
 fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String> {
     let r = app.run(id, params);
     if r.is_ok()
-        && id != "view.navigate"
+        && !matches!(id, "view.navigate" | "view.ambient_occlusion" | "view.graphics_preset")
         && app.session.active_sketch.is_none()
         && app.session.world_state().bodies.len() == 1
         && app.session.undo.len() <= 2
@@ -208,7 +208,10 @@ pub(crate) fn view_scene(app: &SolveApp, guides: solidcraft_engine::view::Guides
 
 /// The grid and the origin's axes as the window shows them (the Grid and Origin switches).
 pub(crate) fn window_guides(app: &SolveApp) -> solidcraft_engine::view::Guides {
-    solidcraft_engine::view::Guides { grid: app.ui.show_grid && !crate::viewport::active_view(app).hide_grid, axes: app.origin_visible() }
+    solidcraft_engine::view::Guides {
+        grid: app.session.active_sketch.is_some() || (app.ui.show_grid && !crate::viewport::active_view(app).hide_grid),
+        axes: app.origin_visible(),
+    }
 }
 
 /// A picture of the view as the window shows it, RGBA, drawn on the GPU with the viewport's

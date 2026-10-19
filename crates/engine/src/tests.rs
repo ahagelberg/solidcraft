@@ -652,7 +652,7 @@ fn sketch_tools_and_constraints() {
     assert!(s.execute("sketch.line", &json!({"points": [[0, 0], [1, 1]]})).is_err(), "needs an active sketch");
 }
 
-/// The recipe format of the Fusion oracle (01-box) drives the same commands.
+/// The recipe format of the 01-box reference drives the same commands.
 #[test]
 fn script_runs_commands() {
     let mut s = Session::default();

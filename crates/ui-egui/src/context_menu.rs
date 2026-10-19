@@ -383,7 +383,7 @@ fn body_feature_and_sketch(app: &SolveApp, body: &str) -> (Option<u64>, Option<u
     (f, sketch)
 }
 
-/// The canvas menus follow Fusion's (`plan/fusion/ui/NOTES.md`, feature names only): Repeat on
+/// The canvas menus put Repeat on
 /// top, then what fits the selection, our extras after a separator.
 fn viewport_items(app: &SolveApp) -> Vec<Item> {
     let sel = &app.session.selection;

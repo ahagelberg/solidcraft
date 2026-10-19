@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
 use solidcraft_geom::tess::TessPlan;
-use solidcraft_geom::{Mesh, Plane, Region2, Vec2, Vec3, regions_apart};
+use solidcraft_geom::{Mesh, Plane, Region2, UnitVec3, Vec2, Vec3, regions_apart};
 use solidcraft_kernel::{self as kernel, Body, BoolOp};
 use solidcraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
@@ -179,7 +179,7 @@ pub struct ThreadInfo {
     pub pitch: f64,
     pub internal: bool,
     pub axis_point: Vec3,
-    pub axis: Vec3,
+    pub axis: UnitVec3,
     /// Threaded part along the axis from `axis_point`.
     pub start: f64,
     pub end: f64,
@@ -365,10 +365,10 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
     // at the threaded length's end.
     let (s0, s1) = (if open.0 { t.start - p } else { t.start }, if open.1 { t.end + p } else { t.end });
     let base = t.axis_point + k * s0;
-    let plane = Plane { origin: base, x: u, y: k };
+    let plane = Plane { origin: base, x: u, y: *k };
     let section = [Vec2::new(r0, -w0), Vec2::new(r1, -w1), Vec2::new(r1, w1), Vec2::new(r0, w0)];
     // Sections 7.5° apart: the chords sag 0.2% of the radius.
-    Ok(kernel::sweep_helix_mesh(&plane, &section, base, k, p, (s1 - s0) / p, 48)?)
+    Ok(kernel::sweep_helix_mesh(&plane, &section, base, *k, p, (s1 - s0) / p, 48)?)
 }
 
 /// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too
@@ -2390,7 +2390,7 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option
         }
         for (f, (d, facet)) in near {
             let (exact, off) = match kernel::face_surface(&b.body, f as usize) {
-                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(normal), Some((p - point).dot(normal).abs())),
+                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(*normal), Some((p - point).dot(normal).abs())),
                 Some(kernel::FaceSurface::Cylinder { origin, axis, .. }) => {
                     let v = p - origin;
                     ((v - axis * v.dot(axis)).normalized(), None)
@@ -5805,7 +5805,7 @@ pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut 
                 let mut t2 = t.clone();
                 let frame = st.body(&t.body).and_then(|body| doc.model_body_offset(body)).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
                 t2.axis_point = crate::apply_point(&frame, t.axis_point);
-                t2.axis = crate::apply_vector(&frame, t.axis);
+                t2.axis = crate::apply_vector(&frame, *t.axis).unit().unwrap_or(t.axis);
                 out.threads.push(t2);
             }
         }
