@@ -157,7 +157,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     let mut shown = 0;
                     for (name, path) in dialog.folders.iter().flatten() {
                         shown += 1;
-                        let response = ui.add_sized(vec2(ui.available_width(), 20.0), egui::Button::new(name).frame(false));
+                        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), egui::Sense::click());
+                        ui.painter().text(
+                            egui::pos2(rect.left() + 8.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            name,
+                            egui::TextStyle::Button.resolve(ui.style()),
+                            t.text,
+                        );
                         if response.clicked() {
                             browse = Some(path.clone());
                         }
