@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: bool (default false: the front and back copper and copper text); pads?: bool (default true, with copper); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (B-rep is not supported yet)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -29,10 +29,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "INSERT")
         .icon("import")
         .params("path: .3mf, .stl, .obj, .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept)"),
-    CommandSpec::new("file.insert_kicad", "Insert KiCad PCB", insert_kicad)
-        .at("SOLID", "INSERT")
-        .icon("import")
-        .params("path: .kicad_pro project or .kicad_pcb board (imports the board substrate — outline, cutouts and drilled holes — and referenced STEP/VRML models as mesh bodies in a structured component; a project resolves to its same-stem board); name?; thickness?: finite board thickness in mm (default from the board); components?: bool (default: true: load the referenced 3D models); copper?: bool (default: false: build the front and back copper and copper text); pads?: bool (default: true, with copper); silkscreen?: bool (default: true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (B-rep is not supported yet; mesh is the default)"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")
@@ -389,16 +385,6 @@ fn read_kicad_env_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, del
     Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "unterminated environment variable in model path"))
 }
 
-fn insert_kicad(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "file.insert_kicad";
-    let path = path_arg(p, cmd)?;
-    if !solidcraft_io::is_kicad_path(path) {
-        return Err(bad(cmd, "only KiCad project or PCB files (.kicad_pro, .kicad_pcb) can be inserted"));
-    }
-    let options = kicad_options(p, cmd)?;
-    add_kicad(s, path, str_(p, "name"), &options)
-}
-
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
     if !solidcraft_io::is_step_path(path) && p.get("names").is_some_and(|v| !v.is_null()) {
@@ -437,7 +423,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         let mut out = json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]});
-        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up"] {
+        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up", "board_path"] {
             if let Some(v) = r.get(k) {
                 out[k] = v.clone();
             }

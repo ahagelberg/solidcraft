@@ -820,19 +820,16 @@ impl SolveApp {
                     if app.run("component.insert_design", json!({ "path": path })).is_ok() {
                         app.fit_view();
                     }
+                } else if solidcraft_engine::io::is_kicad_path(&path) {
+                    kicad_import_dialog::open(app, &path);
                 } else {
                     app.insert_path_async(&path);
                 }
             });
             return;
         }
-        if id == "file.insert_kicad" {
-            // The board is chosen first; its import settings are asked for next.
-            self.pick_open(|app, path| {
-                if let Some(path) = path {
-                    kicad_import_dialog::open(app, &path);
-                }
-            });
+        if id == "doc.open" {
+            self.pick_open_file();
             return;
         }
         if matches!(id, "file.insert_step" | "file.insert_mesh") {
@@ -1075,6 +1072,35 @@ impl SolveApp {
     pub fn open_path_async(&mut self, path: &str) {
         file_load::begin(self, path, false);
     }
+
+    /// The File ▸ Open picker: a KiCad board asks for its import settings before it opens.
+    pub fn pick_open_file(&mut self) {
+        self.pick_open(|app, path| {
+            if let Some(path) = path {
+                app.open_chosen_file(&path);
+            }
+        });
+    }
+
+    /// Open a file the user chose: a KiCad board through its settings window, as a new design.
+    pub fn open_chosen_file(&mut self, path: &str) {
+        if solidcraft_engine::io::is_kicad_path(path) {
+            kicad_import_dialog::open(self, path);
+        } else {
+            self.home.open = false;
+            self.open_path_async(path);
+        }
+    }
+
+    /// Open a file with the settings a dialog collected (a KiCad board's options), off the
+    /// window thread.
+    pub fn open_path_async_with_options(&mut self, path: &str, options: serde_json::Value) {
+        let mut request = file_load::Request::new(path, file_load::Kind::Open);
+        if let Some(map) = options.as_object() {
+            request.options = map.clone();
+        }
+        let _ = file_load::begin_request(self, request);
+    }
     /// Open one of a design's older versions (the caller asked the user first).
     pub fn open_version_async(&mut self, path: &str, version: u32) {
         let mut request = file_load::Request::new(path, file_load::Kind::Open);
@@ -1085,25 +1111,10 @@ impl SolveApp {
         file_load::begin(self, path, true);
     }
 
-    /// Insert a file with import options (a KiCad board's settings), off the window thread.
-    pub fn insert_path_async_with_options(&mut self, path: &str, options: serde_json::Value) {
-        let mut request = file_load::Request::new(path, file_load::Kind::Insert);
-        if let Some(map) = options.as_object() {
-            request.options = map.clone();
-        }
-        let _ = file_load::begin_request(self, request);
-    }
-
     /// Insert a STEP file's bodies (an Import base feature) or a mesh file's meshes into the
     /// current design.
     pub fn insert_path(&mut self, path: &str) {
-        let cmd = if solidcraft_engine::io::is_kicad_path(path) {
-            "file.insert_kicad"
-        } else if solidcraft_engine::io::is_mesh_path(path) {
-            "file.insert_mesh"
-        } else {
-            "file.insert_step"
-        };
+        let cmd = if solidcraft_engine::io::is_mesh_path(path) { "file.insert_mesh" } else { "file.insert_step" };
         let before: Vec<String> = self.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();

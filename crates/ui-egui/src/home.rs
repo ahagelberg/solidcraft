@@ -394,14 +394,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 ui.add_space(10.0);
                 if big(ui, "open", app.tr("home.open"), false) {
-                    action = Some(Box::new(|app: &mut SolveApp| {
-                        app.pick_open(|app, path| {
-                            if let Some(path) = path {
-                                app.home.open = false;
-                                app.open_path_async(&path);
-                            }
-                        });
-                    }));
+                    action = Some(Box::new(|app: &mut SolveApp| app.pick_open_file()));
                 }
             });
             ui.add_space(24.0);

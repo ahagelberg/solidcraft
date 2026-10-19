@@ -1121,7 +1121,7 @@ pub fn save_folder(app: &SolveApp) -> Option<String> {
 /// A file or folder dropped on the window: a design becomes a component of the open design.
 pub fn drop_path(app: &mut SolveApp, path: &str) {
     if app.home.open {
-        app.open_path_async(path);
+        app.open_chosen_file(path);
         return;
     }
     if Path::new(path).is_dir() {
@@ -1133,7 +1133,7 @@ pub fn drop_path(app: &mut SolveApp, path: &str) {
 
 fn insert_design(app: &mut SolveApp, path: &str) {
     if app.home.open {
-        app.open_path_async(path);
+        app.open_chosen_file(path);
         return;
     }
     if Path::new(path).is_dir() {
@@ -1149,7 +1149,10 @@ fn insert_design(app: &mut SolveApp, path: &str) {
             Ok(_) => app.fit_view(),
             Err(e) => app.set_status(e, true),
         }
-    } else if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) || solidcraft_engine::io::is_kicad_path(path) {
+    } else if solidcraft_engine::io::is_kicad_path(path) {
+        // A board is a whole design: it opens with its import settings, not as a component.
+        crate::kicad_import_dialog::open(app, path);
+    } else if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) {
         app.insert_path_async(path);
     } else {
         app.set_status(crate::i18n::tr("designs.drop_unknown").to_string(), true);

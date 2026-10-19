@@ -1,9 +1,9 @@
 //! Import settings for a KiCad board.
 //!
-//! The file picker only chooses the board; this window chooses what comes in with it: the
-//! referenced 3D models, the front and back copper (and its pads), the silkscreen, the substrate
-//! colour and the thickness. The chosen values are the `file.insert_kicad` options, so the same
-//! import can be repeated from the palette, a script or the control channel.
+//! Opening a board asks what comes in with it: the referenced 3D models, the front and back
+//! copper (and its pads), the silkscreen and its text, the substrate colour and the thickness.
+//! The chosen values are the `doc.open` options, so the same board can be opened again from a
+//! script or the control channel.
 
 use serde_json::{Value, json};
 
@@ -37,7 +37,7 @@ impl Dialog {
         }
     }
 
-    /// The `file.insert_kicad` parameters, without the path.
+    /// The `doc.open` parameters, without the path.
     pub fn params(&self) -> Value {
         let mut params = json!({
             "components": self.components,
@@ -152,7 +152,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     match action {
         Some("import") if dialog.problem().is_none() => {
             let params = dialog.params();
-            app.insert_path_async_with_options(&dialog.path, params);
+            app.open_path_async_with_options(&dialog.path, params);
             app.set_status(format!("{}: {}", crate::i18n::tr_label("Importing KiCad board"), dialog.path), false);
         }
         Some("cancel") => {}
@@ -197,6 +197,24 @@ mod tests {
         assert!(d.problem().is_some());
         d.thickness = 2.0;
         assert!(d.problem().is_none());
+    }
+
+    #[test]
+    fn the_open_picker_shows_the_settings_window_for_a_board() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.open_chosen_file("board.kicad_pcb");
+        h.frames(1);
+        assert!(h.app.kicad_import.is_some(), "a board opens through its settings");
+        assert!(!h.app.file_load.busy(), "nothing is read before the settings are chosen");
+    }
+
+    #[test]
+    fn a_dropped_board_asks_for_its_settings() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.drop_path("board.kicad_pcb");
+        h.frames(1);
+        assert!(h.app.kicad_import.is_some(), "a dropped board opens through its settings");
+        assert!(!h.app.file_load.busy());
     }
 
     #[test]

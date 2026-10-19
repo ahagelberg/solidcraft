@@ -436,7 +436,6 @@
   "cmd.explode_show": "显示爆炸图",
   "cmd.expr_evaluate": "计算表达式",
   "cmd.face_delete": "删除面",
-  "cmd.file.insert_kicad": "插入 KiCad PCB",
   "cmd.file_export": "导出",
   "cmd.file_insert_mesh": "插入网格",
   "cmd.file_insert_step": "插入 STEP",

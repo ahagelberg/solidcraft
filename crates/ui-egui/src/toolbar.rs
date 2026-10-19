@@ -480,11 +480,7 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close = true;
                 }
                 if item(ui, &format!("{}…", app.tr("ui.open")), "Ctrl+O") {
-                    app.pick_open(|app, path| {
-                        if let Some(path) = path {
-                            app.open_path_async(&path);
-                        }
-                    });
+                    app.pick_open_file();
                     close = true;
                 }
                 ui.menu_button(app.tr("ui.open_recent"), |ui| {
@@ -511,10 +507,6 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 if item_if(ui, "Insert Mesh…", "", shown) {
                     app.start("file.insert_mesh");
-                    close = true;
-                }
-                if item_if(ui, "Insert KiCad PCB…", "", shown) {
-                    app.start("file.insert_kicad");
                     close = true;
                 }
                 if item_if(ui, &format!("{}…", app.tr_label("Insert Design")), "", shown) {

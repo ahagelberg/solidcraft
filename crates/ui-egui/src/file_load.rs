@@ -62,7 +62,6 @@ impl Request {
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
             Kind::Open => ("doc.open", self.params()),
-            Kind::Insert if solidcraft_engine::io::is_kicad_path(&self.path) => ("file.insert_kicad", self.params()),
             Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert => ("file.insert_step", self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
@@ -258,7 +257,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
     let command = req.params.get("command").or(req.params.get("id")).and_then(Value::as_str);
     let kind = match command {
         Some("doc.open") => Kind::Open,
-        Some("file.insert_step" | "file.insert_mesh" | "file.insert_kicad") => Kind::Insert,
+        Some("file.insert_step" | "file.insert_mesh") => Kind::Insert,
         Some("file.export_view_dxf") => Kind::ExportDxf,
         _ => return Some(req),
     };
@@ -989,10 +988,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn kicad_insert_keeps_options_in_the_background_request() {
-        let mut request = Request::new("board.kicad_pro", Kind::Insert);
+    fn kicad_open_keeps_options_in_the_background_request() {
+        let mut request = Request::new("board.kicad_pro", Kind::Open);
         request.options.insert("thickness".into(), json!(2.4));
-        assert_eq!(request.command(), ("file.insert_kicad", json!({"path":"board.kicad_pro", "thickness":2.4})));
+        assert_eq!(request.command(), ("doc.open", json!({"path":"board.kicad_pro", "thickness":2.4})));
     }
 
     #[test]

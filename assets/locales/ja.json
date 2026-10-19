@@ -436,7 +436,6 @@
   "cmd.explode_show": "分解図を表示",
   "cmd.expr_evaluate": "式を評価",
   "cmd.face_delete": "面を削除",
-  "cmd.file.insert_kicad": "KiCad PCBを挿入",
   "cmd.file_export": "エクスポート",
   "cmd.file_insert_mesh": "メッシュを挿入",
   "cmd.file_insert_step": "STEP を挿入",

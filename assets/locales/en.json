@@ -436,7 +436,6 @@
   "cmd.explode_show": "Show Exploded View",
   "cmd.expr_evaluate": "Evaluate Expression",
   "cmd.face_delete": "Delete Face",
-  "cmd.file.insert_kicad": "Insert KiCad PCB",
   "cmd.file_export": "Export",
   "cmd.file_insert_mesh": "Insert Mesh",
   "cmd.file_insert_step": "Insert STEP",

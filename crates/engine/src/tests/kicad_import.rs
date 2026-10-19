@@ -35,7 +35,7 @@ fn with_tolerance(actual: [f64; 6], expected: [f64; 6]) -> bool {
 }
 
 #[test]
-fn project_insert_resolves_board_and_applies_thickness() {
+fn project_open_resolves_board_and_applies_thickness() {
     let dir = temp_dir("project");
     let project = dir.join("controller.kicad_pro");
     let board = dir.join("controller.kicad_pcb");
@@ -43,7 +43,7 @@ fn project_insert_resolves_board_and_applies_thickness() {
     std::fs::write(&board, BOARD).unwrap();
 
     let mut s = Session::default();
-    let result = run(&mut s, "file.insert_kicad", json!({"path": project, "thickness": 2.4}));
+    let result = run(&mut s, "doc.open", json!({"path": project, "thickness": 2.4}));
     assert_eq!(result["board_path"], board.to_string_lossy().to_string());
     assert_eq!(board_box(&s), [0.0, -10.0, 0.0, 20.0, 0.0, 2.4]);
     assert_eq!(s.model.state().bodies.len(), 1);
@@ -53,9 +53,6 @@ fn project_insert_resolves_board_and_applies_thickness() {
     let mut reopened = Session::default();
     run(&mut reopened, "doc.open", json!({"path": design}));
     assert_eq!(board_box(&reopened), [0.0, -10.0, 0.0, 20.0, 0.0, 2.4]);
-
-    run(&mut s, "edit.undo", json!({}));
-    assert!(s.model.state().bodies.is_empty());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -150,8 +147,7 @@ fn copper_silk_colour_and_component_options_are_honoured_and_persist() {
     )
     .unwrap();
     let mut s = Session::default();
-    let result =
-        run(&mut s, "file.insert_kicad", json!({"path": board, "components": false, "copper": true, "silkscreen": true, "color": "#ff8000"}));
+    let result = run(&mut s, "doc.open", json!({"path": board, "components": false, "copper": true, "silkscreen": true, "color": "#ff8000"}));
     let names: Vec<String> = result["bodies"].as_array().unwrap().iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
     assert!(names.iter().any(|n| n == "Copper F.Cu"), "{names:?}");
     assert!(names.iter().any(|n| n == "Silkscreen F.SilkS"), "{names:?}");
@@ -172,7 +168,7 @@ fn b_rep_is_refused() {
     let mut s = Session::default();
     let board = std::env::temp_dir().join(format!("solidcraft-kicad-brep-{}.kicad_pcb", std::process::id()));
     std::fs::write(&board, BOARD).unwrap();
-    let error = s.execute("file.insert_kicad", &json!({"path": board, "representation": "brep"})).expect_err("B-rep must be refused");
+    let error = s.execute("doc.open", &json!({"path": board, "representation": "brep"})).expect_err("B-rep must be refused");
     assert!(error.to_string().contains("not supported yet"), "{error}");
     let _ = std::fs::remove_file(board);
 }

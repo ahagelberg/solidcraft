@@ -2,11 +2,10 @@
 
 SolidCraft reads KiCad printed-circuit boards (`.kicad_pcb`, or a `.kicad_pro` project, which resolves to its same-stem board). The reader in `crates/io/src/kicad_in.rs` is written from KiCad's documented s-expression format; it brings the board in as mesh bodies in a component named after the file, building the 3D models of its footprints as nested components laid out on the board.
 
-- **Open**: File → Open (`doc.open`) accepts `.kicad_pcb`/`.kicad_pro` and starts a new design; `solidcraft board.kicad_pcb`; the MCP `open` tool.
-- **Insert** into the current design: File → Insert KiCad PCB… or SOLID → INSERT (`file.insert_kicad {path}`), which first asks for the import settings.
-- **Drag and drop** a board on the window: inserted when the design has features, opened otherwise.
+- **Open**: File → Open (`doc.open`) lists KiCad boards (`.kicad_pcb` and `.kicad_pro`) and asks for the import settings before opening one as a new design; `solidcraft board.kicad_pcb`; the MCP `open` tool.
+- **Drag and drop** a board on the window: it opens as a new design through the same settings window.
 
-The board's geometry is built once, at import: the design stores the resulting meshes, so it reopens without the board file or its 3D models. Changing the options means inserting the board again.
+The board's geometry is built once, at import: the design stores the resulting meshes, so it reopens without the board file or its 3D models. Changing the options means opening the board again.
 
 ## What comes in
 
@@ -26,7 +25,7 @@ The other layers are options:
 - **Board colour** (`color`): the substrate colour, `"#rrggbb"` (or `"#rgb"`) or `[r, g, b]`. The default is solder-mask green.
 
 ```json
-{"command": "file.insert_kicad", "params": {
+{"command": "doc.open", "params": {
   "path": "keyboard.kicad_pro",
   "components": true,
   "copper": true,
@@ -41,7 +40,6 @@ The other layers are options:
 | option | default | meaning |
 | --- | --- | --- |
 | `path` | — | `.kicad_pcb` board or `.kicad_pro` project (any case) |
-| `name` | the file's | the Import feature's and the component's name |
 | `thickness` | the board's | substrate thickness in millimetres (finite, more than 0 and at most 1000) |
 | `components` | `true` | load the footprint 3D models |
 | `copper` | `false` | build the front and back copper |
@@ -50,13 +48,13 @@ The other layers are options:
 | `color` | solder-mask green | board substrate colour, `"#rrggbb"`/`"#rgb"` or `[r, g, b]` |
 | `representation` | `mesh` | `mesh` or `brep`; B-rep is not supported yet and is refused before the board is read |
 
-`file.insert_kicad` validates every option before reading the board, so a bad colour or a B-rep request fails with a message and leaves the design untouched. The command's reply reports the feature, the component (`component`, `component_name`, `occurrence`), the body names and the warnings the reader collected.
+`doc.open` validates every option before reading the board, so a bad colour or a B-rep request fails with a message and leaves the current design alone. The command's reply reports the feature, the component (`component`, `component_name`, `occurrence`), the body names and the warnings the reader collected.
 
 ## In the window
 
-File → Insert KiCad PCB… (or SOLID → INSERT → Insert KiCad PCB) picks the board, then opens **Import KiCad PCB**: the 3D models, the copper layers (with pads), the silkscreen, the board's own thickness or a typed one, the board colour, and the representation (Mesh; B-rep is shown disabled). **Import** runs `file.insert_kicad` with those options, one undo step; **Cancel** leaves the design alone.
+File → Open… and choose a board (the picker lists KiCad PCB files), or drop one on the window: SolidCraft opens **Import KiCad PCB** first — the 3D models, the copper layers (with pads), the silkscreen and its text, the board's own thickness or a typed one, the board colour, and the representation (Mesh; B-rep is shown disabled). **Import** opens the board as a new design with those options; **Cancel** leaves the current design alone.
 
-Opening a board, or dropping one on the window, uses the defaults (models, silkscreen, board thickness, no copper) and can be repeated with other options from the palette, a script or the control channel.
+`doc.open` takes the same options, so a script, the CLI or the MCP tool opens a board without the window.
 
 ## VRML models
 
