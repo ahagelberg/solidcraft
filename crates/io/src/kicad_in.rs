@@ -432,12 +432,12 @@ pub fn parse_kicad_board_with(bytes: &[u8], file: &str, options: KicadOptions) -
                 }
             }
             Some("zone") => {
-                if let Some(zone) = parse_zone(item, &mut board.warnings) {
+                for zone in parse_zone(item, &mut board.warnings) {
                     if board.zones.len() >= MAX_ZONES {
                         board.warnings.push("additional zones were skipped".into());
-                    } else {
-                        board.zones.push(zone);
+                        break;
                     }
+                    board.zones.push(zone);
                 }
             }
             _ => {}
@@ -673,27 +673,28 @@ fn parse_via(expr: &Expr<'_>, warnings: &mut Vec<String>) -> Option<KicadVia> {
     Some(KicadVia { at, size, drill, layers })
 }
 
-fn parse_zone(expr: &Expr<'_>, warnings: &mut Vec<String>) -> Option<KicadZone> {
-    let layer = layer_of(expr)?;
-    if !is_outer_copper(&layer) {
-        return None;
-    }
-    let mut contours = Vec::new();
+/// A copper zone's filled polygons, one zone per layer they lie on. KiCad 9 writes a zone that
+/// spans layers as `(layers "F.Cu" "B.Cu")` with a `filled_polygon` per layer, so the fill's own
+/// layer decides (the zone's `(layer …)` is the fallback).
+fn parse_zone(expr: &Expr<'_>, warnings: &mut Vec<String>) -> Vec<KicadZone> {
+    let zone_layer = layer_of(expr).filter(|layer| is_outer_copper(layer));
+    let mut contours: Vec<(String, Vec<Vec<[f64; 2]>>)> = Vec::new();
     let mut total = 0usize;
     for fill in children(expr).iter().filter(|e| head(e) == Some("filled_polygon")) {
-        if let Some(points) = poly_points(fill) {
-            total = total.saturating_add(points.len());
-            if total > MAX_ZONE_POINTS {
-                warnings.push("a copper zone was too large and was skipped".into());
-                return None;
-            }
-            contours.push(points);
+        let layer = layer_of(fill).or_else(|| zone_layer.clone());
+        let Some(layer) = layer.filter(|layer| is_outer_copper(layer)) else { continue };
+        let Some(points) = poly_points(fill) else { continue };
+        total = total.saturating_add(points.len());
+        if total > MAX_ZONE_POINTS {
+            warnings.push("a copper zone was too large and was skipped".into());
+            return Vec::new();
+        }
+        match contours.iter_mut().find(|(l, _)| *l == layer) {
+            Some((_, list)) => list.push(points),
+            None => contours.push((layer, vec![points])),
         }
     }
-    if contours.is_empty() {
-        return None;
-    }
-    Some(KicadZone { layer, contours })
+    contours.into_iter().map(|(layer, contours)| KicadZone { layer, contours }).collect()
 }
 
 fn join_outline_segments(segments: Vec<([f64; 2], [f64; 2])>, warnings: &mut Vec<String>) -> Vec<Vec<[f64; 2]>> {

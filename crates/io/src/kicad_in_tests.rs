@@ -538,3 +538,33 @@ fn b_rep_is_refused_with_a_clear_message() {
     let error = read_kicad(BOARD.as_bytes(), "test.kicad_pcb", &options, &mut load).err().expect("B-rep must be refused");
     assert!(error.to_string().contains("B-rep"), "{error}");
 }
+
+/// KiCad 9 writes a zone spanning both sides as `(layers "F.Cu" "B.Cu")`, one fill per layer:
+/// both fills must come in, not be dropped for having no single `(layer …)`.
+#[test]
+fn a_zone_spanning_both_sides_brings_both_fills() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (zone (net "GND") (layers "F.Cu" "B.Cu") (fill yes)
+        (polygon (pts (xy 1 1) (xy 19 1) (xy 19 9) (xy 1 9)))
+        (filled_polygon (layer "F.Cu") (pts (xy 1 2) (xy 9 2) (xy 9 8) (xy 1 8)))
+        (filled_polygon (layer "B.Cu") (pts (xy 11 2) (xy 19 2) (xy 19 8) (xy 11 8)))))"#;
+    let board = parse_kicad_board(source.as_bytes(), "zones.kicad_pcb").unwrap();
+    let layers: Vec<&str> = board.zones.iter().map(|z| z.layer.as_str()).collect();
+    assert_eq!(layers, ["F.Cu", "B.Cu"], "{layers:?}");
+    assert_eq!(board.zones.iter().map(|z| z.contours.len()).sum::<usize>(), 2);
+
+    // Both fills reach the model, as copper on their own side.
+    let options = KicadOptions { copper: KicadCopper::Mesh, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "zones.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    for name in ["Copper F.Cu", "Copper B.Cu"] {
+        let copper = meshes.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} is missing"));
+        let positions: Vec<Vec3> = copper.positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect();
+        let triangles: Vec<[u32; 3]> = copper.triangles.as_chunks::<3>().0.to_vec();
+        let body = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
+        let area = solidcraft_kernel::measure(&body).unwrap().volume / 0.035;
+        assert!((area - 8.0 * 6.0).abs() < 1e-6, "{name}: {area}");
+    }
+}
