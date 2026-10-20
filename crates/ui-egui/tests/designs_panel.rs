@@ -271,6 +271,7 @@ fn the_row_lists_the_versions_and_an_old_one_asks_before_it_opens_and_saves() {
         h.app.version_prompt
     );
     h.run(&json!([{ "widget": "Save" }])).unwrap();
+    h.settle();
     assert_eq!(h.app.session.version, None, "the save did not go through");
     assert_eq!(h.app.session.versions, 2, "the edited version 1 should be the file's version 2");
 }

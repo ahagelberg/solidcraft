@@ -79,6 +79,8 @@ pub mod keymap;
 pub mod kicad_import_dialog;
 mod linked_source;
 pub mod local_time;
+#[cfg(test)]
+mod loft_rails_dialog_tests;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
@@ -124,6 +126,8 @@ pub use file_picker::FilePickerFuture;
 #[cfg(test)]
 mod blend_arrow_tests;
 #[cfg(test)]
+mod blend_dialog_tests;
+#[cfg(test)]
 mod boundary_dialog_tests;
 pub(crate) mod display_lod;
 #[cfg(test)]
@@ -135,6 +139,7 @@ pub mod palette;
 pub mod params_dialog;
 pub(crate) mod pick_buffer;
 pub(crate) mod pick_index;
+pub(crate) mod plugins;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
@@ -148,6 +153,7 @@ pub mod render_workspace;
 mod revolve_edit_tests;
 #[cfg(test)]
 mod revolve_manipulator_tests;
+pub mod save_job;
 pub mod scenario;
 pub mod select_other;
 pub mod selection;
@@ -174,6 +180,8 @@ mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
+#[cfg(test)]
+mod sketch_moving_click_tests;
 pub mod sketch_palette;
 mod sketch_pattern_tree;
 #[cfg(test)]
@@ -325,6 +333,8 @@ pub struct SolveApp {
     pub pre_sketch_marker: Option<Option<usize>>,
     pub services: Services,
     file_picker: Option<file_picker::Pending>,
+    /// A Save or Save As being written on a worker (see [`save_job`]).
+    saving: Option<save_job::Saving>,
     pub viewport: viewport::ViewportState,
     pub render_workspace: render_workspace::State,
     pub tool: Option<tools::Tool>,
@@ -341,6 +351,8 @@ pub struct SolveApp {
     pub menu: context_menu::MenuState,
     /// Browser tree state (reveal, groups being edited, occurrence moves).
     pub tree: browser::TreeState,
+    /// A saved design copied for insertion into another open document.
+    pub linked_design_clipboard: Option<String>,
     /// The S box (command search at the cursor): recent and pinned commands.
     pub sbox: shortcut_box::ShortcutBox,
     /// Keyboard shortcuts the user changed.
@@ -372,6 +384,9 @@ pub struct SolveApp {
     /// thread, and those asked for meanwhile ([`deferred`]).
     pub deferred: Option<deferred::Deferred>,
     pub deferred_queue: Vec<(String, Value)>,
+    /// A delete's check of what it takes with it or breaks, computing off the window thread
+    /// ([`deferred::DeleteCheck`], #2678).
+    pub delete_check: Option<deferred::DeleteCheck>,
     /// How long OK waits for a feature before computing it off the window thread, saying so;
     /// `None`: it waits as long as it takes (headless use, tests). The desktop app sets it.
     pub apply_off_thread: Option<std::time::Duration>,
@@ -474,6 +489,7 @@ impl SolveApp {
             pre_sketch_marker: None,
             services,
             file_picker: None,
+            saving: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
             tool: None,
@@ -485,6 +501,7 @@ impl SolveApp {
             palette: palette::Palette::default(),
             menu: context_menu::MenuState::default(),
             tree: browser::TreeState::default(),
+            linked_design_clipboard: None,
             sbox: shortcut_box::ShortcutBox::default(),
             keymap: keymap::Keymap::default(),
             help: help::HelpState::default(),
@@ -502,6 +519,7 @@ impl SolveApp {
             applying: None,
             deferred: None,
             deferred_queue: Vec::new(),
+            delete_check: None,
             apply_off_thread: None,
             last_command: None,
             esc_handled: false,
@@ -682,7 +700,7 @@ impl SolveApp {
 
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        if self.file_load.busy() || self.file_picker.is_some() {
+        if self.file_load.busy() || self.file_picker.is_some() || self.saving.is_some() {
             return Err("a file operation is in progress".into());
         }
         let t0 = now_ms();
@@ -713,7 +731,14 @@ impl SolveApp {
             // Curves drawn in construction (or centerline) mode take that line type.
             sketch_palette::apply_mode(self, id, v);
         }
-        match &r {
+        self.finish_command(id, &r);
+        r
+    }
+
+    /// What follows a command's run, whether it ran here or on a worker (a save): its echo,
+    /// the status line when it failed, what opening and saving update, and the toolbar tab.
+    pub(crate) fn finish_command(&mut self, id: &str, r: &Result<Value, String>) {
+        match r {
             Ok(v) => {
                 // Programmatic callers (the control channel, scripts) run outside a render
                 // language scope, so resolve the echo from the saved preference instead of the
@@ -773,7 +798,6 @@ impl SolveApp {
             self.ui.tab = "SOLID".into();
             self.tool = None;
         }
-        r
     }
 
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
@@ -1370,6 +1394,10 @@ impl SolveApp {
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
+        save_job::tick(self, false);
+        if self.saving.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
         self.esc_handled = false;
         prefs::apply(self, ctx);
         if !self.styled || theme::is_dark() != self.ui.dark || theme::vision() != self.preferences.color_vision {
@@ -1484,6 +1512,7 @@ impl SolveApp {
     fn cad_ui(&mut self, ui: &mut egui::Ui, report_input: &mut Option<issue_report::CadInput>) {
         scenario::clear_handles();
         self.poll_deferred(ui.ctx());
+        self.poll_delete_check(ui.ctx());
         toolbar::app_bar(self, ui);
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());

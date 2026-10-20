@@ -1271,7 +1271,7 @@ impl Plate {
 
     fn add_loop(&mut self, points: &[[f64; 2]], z0: f64, z1: f64) {
         let Some(loop_) = clean_loop(points) else { return };
-        let pts: Vec<Vec2> = loop_.polyline(1e-3);
+        let pts: Vec<Vec2> = loop_.polyline(1e-3).to_vec();
         let pts: Vec<[f64; 2]> = pts.into_iter().map(|p| [p.x, p.y]).collect();
         if pts.len() < 3 {
             return;

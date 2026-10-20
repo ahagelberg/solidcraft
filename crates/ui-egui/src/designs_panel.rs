@@ -1166,7 +1166,7 @@ fn insert_design(app: &mut SolveApp, path: &str) {
     }
 }
 
-fn same_path(a: Option<&str>, b: &str) -> bool {
+pub(crate) fn same_path(a: Option<&str>, b: &str) -> bool {
     let Some(a) = a else { return false };
     let full = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
     full(a) == full(b)

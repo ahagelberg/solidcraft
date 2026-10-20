@@ -609,7 +609,7 @@ pub fn save(app: &mut SolveApp) {
         if discard_later {
             params["discard_later_versions"] = json!(true);
         }
-        let _ = app.run("file.save", params);
+        crate::save_job::start(app, "file.save", params);
     } else {
         save_as(app);
     }
@@ -630,7 +630,10 @@ fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
         if let Some(path) = path {
             // A design saved as a design carries its preview, so the Designs panel shows it.
             let cache = path.ends_with(solidcraft_engine::io::DESIGN_EXT);
-            let _ = app.run("file.save_as", json!({"path": path, "cache": cache}));
+            // A save under way answers a closing tab when it ends.
+            if crate::save_job::start(app, "file.save_as", json!({"path": path, "cache": cache})) {
+                return;
+            }
         }
         crate::documents::saved_for_close(app);
     });
@@ -1491,6 +1494,8 @@ mod header_report_tests {
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();
+        // Written on a worker: the window keeps drawing until it is done.
+        h.settle();
         let saved = h.app.session.path.clone().unwrap();
         let bytes = std::fs::read(&saved).unwrap();
         assert!(!solidcraft_engine::io::is_design_container(&bytes));

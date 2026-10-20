@@ -165,6 +165,13 @@ impl Ahead {
     pub fn evaluate(self, commands: &[(String, Value)]) -> Result<()> {
         self.0.preview_in_place(commands).map(|_| ())
     }
+
+    /// Run `commands` one after another, each reply or error in turn (what they evaluate stays
+    /// in the shared evaluation cache): the checks a front end makes before a command, such as
+    /// what a delete takes with it (#2678), computed off its window thread.
+    pub fn replies(mut self, commands: &[(String, Value)]) -> Vec<Result<Value>> {
+        commands.iter().map(|(id, params)| self.0.execute(id, params)).collect()
+    }
 }
 
 /// What some commands would make, evaluated on a scratch copy of a session

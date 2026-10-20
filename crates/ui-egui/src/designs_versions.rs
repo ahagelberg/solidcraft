@@ -40,7 +40,7 @@ fn rewrite(app: &mut SolveApp, command: &str, path: &str, version: u32) {
     match app.run(command, json!({ "path": path, "version": version })) {
         Ok(reply) => {
             let versions = reply.get("versions").and_then(serde_json::Value::as_u64).unwrap_or(1).clamp(1, u64::from(u32::MAX)) as u32;
-            if app.session.path.as_deref() == Some(path) {
+            if crate::designs_panel::same_path(app.session.path.as_deref(), path) {
                 app.session.versions = versions;
                 // An open version keeps its number unless the ones before it went (a purge
                 // renumbers from 1); one the operation deleted is no longer a version of the file,
