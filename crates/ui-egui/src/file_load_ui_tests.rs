@@ -267,3 +267,44 @@ fn a_control_import_passes_up_and_names_on() {
     assert!(size[1] > 39.9 && !offered, "{size:?} {offered}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A board imported and then rebuilt twice (its copper) fills the bar once: the earlier
+/// rebuild's features count, so it never starts again from nothing.
+#[test]
+fn the_loading_bar_rises_once_while_a_board_imports() {
+    let dir = scratch("kicad-progress");
+    let mut source = String::from(
+        "(kicad_pcb (version 20221018) (generator pcbnew) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 120 80) (layer \"Edge.Cuts\"))\n",
+    );
+    for row in 0..24 {
+        let y = 4.0 + row as f64 * 2.0;
+        let (a, b) = if row % 2 == 0 { (4.0, 116.0) } else { (116.0, 4.0) };
+        source.push_str(&format!("  (segment (start {a} {y}) (end {b} {y}) (width 0.25) (layer \"F.Cu\") (net 1))\n"));
+    }
+    for i in 0..120 {
+        let (x, y) = (6.0 + (i % 20) as f64 * 5.0, 6.0 + (i / 20) as f64 * 8.0);
+        source.push_str(&format!("  (via (at {x} {y}) (size 1.2) (drill 0.6) (layers \"F.Cu\" \"B.Cu\") (net 1))\n"));
+    }
+    source.push(')');
+    let board = dir.join("board.kicad_pcb");
+    std::fs::write(&board, source).unwrap();
+
+    let mut w = Win::new();
+    w.app.open_path_async_with_options(board.to_string_lossy().as_ref(), json!({"copper": "brep", "components": false}));
+    let mut seen: Vec<f64> = Vec::new();
+    let began = std::time::Instant::now();
+    while w.app.file_load.busy() && began.elapsed() < std::time::Duration::from_secs(180) {
+        w.frame(vec![]);
+        if let Some(progress) = crate::scenario::count_of("file_loading:progress") {
+            seen.push(progress);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(seen.len() > 4, "the bar was drawn while the board came in");
+    let backwards = seen.windows(2).find(|w| w[1] + 1e-6 < w[0]).map(|w| (w[0], w[1]));
+    assert!(backwards.is_none(), "the bar went back {backwards:?}; it must only rise");
+    // Every rebuild of the board counts, so the bar reaches the end of the rebuilding stage.
+    assert!(seen.iter().any(|p| *p >= 0.94), "the bar fills {:?}", seen.iter().fold(0.0f64, |a, b| a.max(*b)));
+    assert!(!w.app.file_load.busy(), "the board opened");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -768,14 +768,42 @@ pub fn kicad_board_mesh(board: &KicadBoard, thickness: f64) -> Result<crate::Mes
     })
 }
 
+/// The import's steps on one scale of a thousand units: starting, the board parsed, its
+/// substrate, where the copper begins, the silkscreen, the end. The copper reports the middle.
+const IMPORT_STEP_UNITS: [usize; 6] = [0, 100, 250, 400, 900, 1000];
+
+/// Tell the watcher how far the import is; the window shows it as part of its one bar.
+fn report_import(step: usize) {
+    if let Some(watch) = solidcraft_kernel::watch::current() {
+        let units = IMPORT_STEP_UNITS.get(step).copied().unwrap_or(1000);
+        watch.progress("reading", units, 1000);
+    }
+}
+
+/// Most regions one piece of the copper build holds (the build shows itself piece by piece).
+const COPPER_BUILD_PIECE: usize = 500;
+
+/// The copper build is the middle of a board's import: `fraction` of it, 0..1.
+fn report_copper(fraction: f64) {
+    let fraction = fraction.clamp(0.0, 1.0);
+    if let Some(watch) = solidcraft_kernel::watch::current() {
+        // The copper runs from where it starts (400) to where the silkscreen does (900).
+        let units = 400.0 + 450.0 * fraction;
+        watch.progress("reading", units as usize, 1000);
+    }
+}
+
 /// Read a board and its referenced STEP/VRML models into one mesh feature and placement plan.
 pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadLoader<'_>) -> Result<KicadImport> {
     if options.representation == KicadRepresentation::Brep {
         return Err(IoError::Invalid("B-rep KiCad boards are not supported yet; choose mesh".into()));
     }
+    report_import(0);
     let board = parse_kicad_board_with(bytes, file, options.clone())?;
+    report_import(1);
     let thickness = options.thickness.unwrap_or(board.thickness);
     let board_mesh = kicad_board_mesh(&board, thickness)?;
+    report_import(2);
     let mut meshes = vec![mesh_data(board_mesh.name, board_mesh.positions, board_mesh.triangles, board_mesh.color)];
     let mut plan = crate::MeshPlan { bodies: vec![None], ..Default::default() };
     let mut warnings = board.warnings.clone();
@@ -895,6 +923,7 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
         }
     }
     let mut copper = None;
+    report_import(3);
     if options.copper == KicadCopper::Brep {
         copper = Some(copper_brep(&board, options.pads, thickness, &mut warnings)?);
     } else if options.copper != KicadCopper::None {
@@ -903,12 +932,14 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
             plan.bodies.push(None);
         }
     }
+    report_import(4);
     if options.silkscreen {
         for (mesh, layer) in silkscreen_meshes(&board, thickness, &mut warnings) {
             meshes.push(mesh_data(format!("Silkscreen {layer}"), mesh.positions, mesh.triangles, Some([0.92, 0.92, 0.90])));
             plan.bodies.push(None);
         }
     }
+    report_import(5);
     let body_names: Vec<String> = meshes.iter().map(|mesh| mesh.name.clone()).collect();
     let file_name = Path::new(file).file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_else(|| file.to_string());
     let feature = crate::MeshFeature {
@@ -2020,21 +2051,30 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         warnings.push(format!("the board has more copper items than B-rep copper builds ({}); the rest were left out", MAX_BREP_COPPER_ITEMS));
     }
     let mut out: Vec<(String, solidcraft_kernel::Body)> = Vec::new();
+    let mut layers_done = 0.0f64;
     for (regions, layer, z0, z1) in [(front, "F.Cu", top, bottom), (back, "B.Cu", under, under_top)] {
         if regions.is_empty() {
             continue;
         }
-        let bodies = extrude_regions_bodies(&regions, z0, z1).or_else(|error| {
-            // One bad item must not lose the layer: build them one by one.
-            let mut one = Vec::new();
-            for region in &regions {
-                match extrude_regions_bodies(std::slice::from_ref(region), z0, z1) {
-                    Ok(mut bodies) => one.append(&mut bodies),
-                    Err(_) => warnings.push(format!("a copper item on {layer} could not be built")),
+        // A big board's copper is the bulk of the work: build it in pieces, showing each.
+        let mut bodies = Vec::new();
+        let pieces = regions.len().div_ceil(COPPER_BUILD_PIECE).max(1);
+        for (n, piece) in regions.chunks(COPPER_BUILD_PIECE).enumerate() {
+            let built = extrude_regions_bodies(piece, z0, z1).or_else(|error| {
+                // One bad item must not lose the layer: build them one by one.
+                let mut one = Vec::new();
+                for region in piece {
+                    match extrude_regions_bodies(std::slice::from_ref(region), z0, z1) {
+                        Ok(mut bodies) => one.append(&mut bodies),
+                        Err(_) => warnings.push(format!("a copper item on {layer} could not be built")),
+                    }
                 }
-            }
-            if one.is_empty() { Err(error) } else { Ok(one) }
-        })?;
+                if one.is_empty() { Err(error) } else { Ok(one) }
+            })?;
+            bodies.extend(built);
+            report_copper((layers_done + (n + 1) as f64 / pieces as f64) * 0.5);
+        }
+        layers_done += 0.5;
         for (n, chunk) in bodies.chunks(MAX_COMPOUND_SHELLS).enumerate() {
             let pieces: Vec<&solidcraft_kernel::Body> = chunk.iter().collect();
             let body = solidcraft_kernel::compound(&pieces).map_err(|e| IoError::Invalid(format!("KiCad copper: {e}")))?;
@@ -2042,10 +2082,12 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
             out.push((name, body));
         }
     }
+    report_copper(0.85);
     let exports: Vec<solidcraft_kernel::ExportBody> =
         out.iter().map(|(name, body)| solidcraft_kernel::ExportBody { name: name.clone(), body, color: Some(COPPER_COLOR) }).collect();
     let header = solidcraft_kernel::StepHeader { file_name: "copper.step".into(), organization: "SolidCraft".into(), ..Default::default() };
     let step = solidcraft_kernel::step_export_bodies(&exports, &header).map_err(|e| IoError::Invalid(format!("KiCad copper STEP: {e}")))?;
+    report_copper(1.0);
     if step.len() > crate::MAX_STEP_BYTES {
         return Err(IoError::Invalid(format!(
             "this board's B-rep copper exceeds the STEP size limit ({} MB); choose modelled mesh",

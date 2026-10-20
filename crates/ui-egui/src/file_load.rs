@@ -99,6 +99,9 @@ struct Running {
     partial_rx: Option<Receiver<(egui::ColorImage, usize)>>,
     /// The picture shown is of the first this many features (`None`: the saved preview).
     built: Option<usize>,
+    /// The highest fraction the bar has shown: the stages add up to one bar, so it never goes
+    /// back (a rebuild that starts again, or a stage that ends, must not undo the work shown).
+    high: f32,
     /// A STEP file read a piece per frame on this thread (the web app), instead of on a worker.
     staged: Option<Staged>,
 }
@@ -129,6 +132,34 @@ struct Staged {
     triangles: usize,
     /// The overlay has been drawn once (the first frame does no work, so it shows at once).
     shown: bool,
+}
+
+/// Parts of the loading bar: reading and converting the file, then rebuilding the timeline. The
+/// view and the thumbnail finish it.
+const READING_SHARE: f32 = 0.45;
+const REBUILDING_SHARE: f32 = 0.50;
+
+/// The loading bar's fraction. The stages are parts of one bar — reading and converting the file,
+/// then the rebuild (every rebuild of the operation counts, see `Progress::overall`) — and it
+/// never goes back: `high` is the most it has shown.
+fn bar_fraction(phase: u8, read: Option<f32>, rebuild: f32, export: bool, high: f32) -> f32 {
+    let rebuild = rebuild.clamp(0.0, 1.0);
+    let shown = if export {
+        // An export has one stage of its own.
+        read.map(|read| read.clamp(0.0, 1.0)).unwrap_or(rebuild)
+    } else {
+        match phase {
+            // Reading and converting the file is the first part of the work, the rebuild the
+            // rest; a file with no reading stage shows its rebuild over both.
+            0 => match read {
+                Some(read) => READING_SHARE * read.clamp(0.0, 1.0) + REBUILDING_SHARE * rebuild,
+                None => (READING_SHARE + REBUILDING_SHARE) * rebuild,
+            },
+            1 => READING_SHARE + REBUILDING_SHARE,
+            _ => 1.0,
+        }
+    };
+    high.max(shown.clamp(0.0, 1.0))
 }
 
 /// Designs up to this many triangles get a thumbnail (a picture of more takes a while).
@@ -426,6 +457,7 @@ fn start(app: &mut SolveApp) {
                 preview: None,
                 partial_rx,
                 built: None,
+                high: 0.0,
                 staged: None,
             })
         }
@@ -468,6 +500,7 @@ fn start_staged(app: &mut SolveApp) {
         preview: None,
         partial_rx: None,
         built: None,
+        high: 0.0,
         staged: Some(Staged { tx, session: Some(session), command, params, reading: None, ran: None, warmed: 0, triangles: 0, shown: false }),
         request,
     });
@@ -860,7 +893,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 /// its window buttons and the window's resize edges stay live; the design underneath takes no
 /// pointer input until the file is in.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(r) = &app.file_load.running else { return };
+    let Some(r) = app.file_load.running.as_mut() else { return };
     let cancelled = r.cancelled();
     if cancelled && app.file_load.queued.is_empty() {
         return;
@@ -870,10 +903,23 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         _ => std::path::Path::new(&r.request.path).file_name().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
     };
     let phase = r.phase.load(Ordering::Relaxed);
-    let (done, total) = r.progress.features();
+    let (_, total) = r.progress.features();
+    // Every rebuild of the operation counts, so a file that is imported and then rebuilt again
+    // keeps one rising bar instead of filling up once per rebuild.
+    let (overall_done, overall_total) = r.progress.overall();
     // Long work inside one feature (a large STEP file) has progress of its own.
     let export = r.request.kind == Kind::ExportDxf;
     let work = r.progress.work().filter(|(_, d, t)| export || (phase == 0 && d < t));
+    // One bar over the whole operation, and one percentage with it: the reading stage's own
+    // counter starts again for each file it reads (and the rebuild for each rebuild), so both
+    // are taken from the highest shown so far.
+    let read = work.map(|_| r.progress.work_fraction());
+    let rebuild = if overall_total == 0 { 0.0 } else { overall_done as f32 / overall_total as f32 };
+    let fraction = if cancelled { 0.0 } else { bar_fraction(phase, read, rebuild, export, r.high) };
+    if !cancelled {
+        r.high = fraction;
+    }
+    let percent = (fraction * 100.0).round() as u32;
     let screen = ctx.content_rect();
     // Leave the title bar to the window. The resize edges are a foreground layer above this.
     let cover = egui::Rect::from_min_max(egui::pos2(screen.left(), screen.top() + crate::toolbar::APP_BAR_HEIGHT), screen.max);
@@ -949,27 +995,22 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 } else {
                     match (phase, work) {
                         (_, work) if r.request.kind == Kind::ExportDxf => crate::dialogs_view_dxf::progress_text(work),
-                        (_, Some(("reading", d, t))) => format!("Reading the file... {}%", d * 100 / t.max(1)),
-                        (_, Some((_, d, t))) => format!("Converting solid {} of {t}", d + 1),
-                        (1, _) => "Preparing the view...".into(),
-                        (2, _) => "Preparing the thumbnail...".into(),
-                        _ if total > 0 => format!("Rebuilding feature {} of {total}", (done + 1).min(total)),
-                        _ => "Reading the file...".into(),
+                        (_, Some(("reading", _, _))) => format!("Reading the file... {percent}%"),
+                        (_, Some(_)) => format!("Converting the geometry... {percent}%"),
+                        (1, _) => format!("Preparing the view... {percent}%"),
+                        (2, _) => format!("Preparing the thumbnail... {percent}%"),
+                        _ if overall_total > 0 => {
+                            format!("Rebuilding feature {} of {} ({percent}%)", (overall_done + 1).min(overall_total), overall_total)
+                        }
+                        _ => format!("Reading the file... {percent}%"),
                     }
                 });
             });
             // Always there, so the card keeps its height as the phases change.
-            let fraction = if cancelled {
-                0.0
-            } else if let Some((_, d, t)) = work {
-                d as f32 / t.max(1) as f32
-            } else if total == 0 {
-                0.0
-            } else if phase == 0 {
-                done as f32 / total as f32
-            } else {
-                1.0
-            };
+            crate::scenario::publish_count("file_loading:progress", fraction as f64);
+            if std::env::var_os("SOLIDCRAFT_PROGRESS_LOG").is_some() {
+                eprintln!("progress: phase={phase} overall={overall_done}/{overall_total} read={read:?} frac={fraction}");
+            }
             ui.add(egui::ProgressBar::new(fraction).desired_height(6.0));
         });
     });
@@ -985,6 +1026,30 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loading_bar_rises_once_through_the_stages() {
+        // A board imported and rebuilt twice, then the view and the thumbnail: one bar.
+        let mut high = 0.0;
+        let mut shown = Vec::new();
+        for (phase, read, rebuild) in
+            [(0u8, None, 0.0), (0, None, 1.0), (0, None, 0.0), (0, None, 0.5), (0, None, 1.0), (1, None, 1.0), (2, None, 1.0)]
+        {
+            high = bar_fraction(phase, read, rebuild, false, high);
+            shown.push(high);
+        }
+        assert!(shown.windows(2).all(|w| w[0] <= w[1]), "the bar never goes back: {shown:?}");
+        assert_eq!(shown.last().copied(), Some(1.0));
+
+        // A file read first: the reading is the first part of the bar, the rebuild the rest.
+        let reading = bar_fraction(0, Some(0.5), 0.0, false, 0.0);
+        assert!((reading - READING_SHARE * 0.5).abs() < 1e-6, "{reading}");
+        let rebuilt = bar_fraction(0, Some(1.0), 1.0, false, reading);
+        assert!((rebuilt - (READING_SHARE + REBUILDING_SHARE)).abs() < 1e-6, "{rebuilt}");
+        let view = bar_fraction(1, None, 1.0, false, rebuilt);
+        assert!((view - (READING_SHARE + REBUILDING_SHARE)).abs() < 1e-6, "{view}");
+        assert_eq!(bar_fraction(2, None, 1.0, false, view), 1.0);
+    }
 
     #[test]
     fn kicad_open_keeps_options_in_the_background_request() {
@@ -1018,6 +1083,7 @@ mod tests {
             preview: None,
             partial_rx: None,
             built: None,
+            high: 0.0,
             staged: None,
         });
         // No worker result is available: drawing a frame must not wait for one.
@@ -1054,6 +1120,7 @@ mod tests {
             preview: None,
             partial_rx: None,
             built: None,
+            high: 0.0,
             staged: None,
         });
         tx.send(Ok(Made { session: other, result: json!({"visible":12}), thumbnail: false })).unwrap();
@@ -1084,6 +1151,7 @@ mod tests {
                 preview: None,
                 partial_rx: None,
                 built: None,
+                high: 0.0,
                 staged: None,
             });
             if change_document {
@@ -1152,6 +1220,7 @@ mod tests {
             preview: None,
             partial_rx: None,
             built: None,
+            high: 0.0,
             staged: None,
         });
         tick(&mut app, &egui::Context::default());
@@ -1178,6 +1247,7 @@ mod tests {
             preview: None,
             partial_rx: None,
             built: None,
+            high: 0.0,
             staged: None,
         });
         assert!(!app.file_load.busy());

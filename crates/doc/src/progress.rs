@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 
 /// Shared between the worker evaluating a design and the window showing its progress.
@@ -17,10 +17,17 @@ pub struct Progress {
     total: AtomicUsize,
     /// The feature the evaluation waits at until cancelled ([`Progress::hold_at`]).
     hold: AtomicUsize,
+    /// Features finished by the earlier rebuilds of the same operation, and the size of the last
+    /// rebuild (an import rebuilds several times: its bar keeps rising instead of restarting).
+    finished: AtomicUsize,
+    last_total: AtomicUsize,
     /// Long work inside one feature (reading a large STEP file): its step and how far it is.
     work_stage: std::sync::Mutex<&'static str>,
     work_done: AtomicUsize,
     work_total: AtomicUsize,
+    /// The most of that work shown so far: its own counter starts again for each file or body
+    /// it converts, and the bar must not restart with it.
+    work_high: AtomicU32,
     /// A window wants the model as far as it is built, to show while the rest is ([`Progress::want_partial`]).
     partial_wanted: AtomicBool,
     /// The latest such model and when it was offered.
@@ -45,9 +52,12 @@ impl Default for Progress {
             done: AtomicUsize::new(0),
             total: AtomicUsize::new(0),
             hold: AtomicUsize::new(usize::MAX),
+            finished: AtomicUsize::new(0),
+            last_total: AtomicUsize::new(0),
             work_stage: std::sync::Mutex::new(""),
             work_done: AtomicUsize::new(0),
             work_total: AtomicUsize::new(0),
+            work_high: AtomicU32::new(0),
             partial_wanted: AtomicBool::new(false),
             partial: std::sync::Mutex::new((None, None)),
         }
@@ -71,6 +81,12 @@ impl Progress {
     pub fn features(&self) -> (usize, usize) {
         (self.done.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed))
     }
+    /// The same across every rebuild of the operation: a file that is imported and then rebuilt
+    /// again counts the earlier rebuilds too, so one bar covers the whole operation.
+    pub fn overall(&self) -> (usize, usize) {
+        let finished = self.finished.load(Ordering::Relaxed);
+        (finished.saturating_add(self.done.load(Ordering::Relaxed)), finished.saturating_add(self.total.load(Ordering::Relaxed)))
+    }
     /// Ask the watched evaluation to offer the model as far as it is built, now and then.
     pub fn want_partial(&self) {
         self.partial_wanted.store(true, Ordering::Relaxed);
@@ -85,6 +101,11 @@ impl Progress {
         let total = self.work_total.load(Ordering::Relaxed);
         let stage = self.work_stage.lock().map(|s| *s).unwrap_or("");
         (total > 0 && !stage.is_empty()).then(|| (stage, self.work_done.load(Ordering::Relaxed).min(total), total))
+    }
+    /// How much of that long work is done, 0..1, never less than it was: a stage that reports
+    /// its own count per file (or per body it converts) must not make the bar start again.
+    pub fn work_fraction(&self) -> f32 {
+        f32::from_bits(self.work_high.load(Ordering::Relaxed))
     }
 }
 
@@ -101,6 +122,9 @@ impl solidcraft_kernel::watch::Watch for KernelWatch {
         }
         self.0.work_total.store(total, Ordering::Relaxed);
         self.0.work_done.store(done, Ordering::Relaxed);
+        // Bits of a non-negative f32 compare as integers: the bar keeps the most shown so far.
+        let fraction = (done as f32 / total.max(1) as f32).clamp(0.0, 1.0);
+        let _ = self.0.work_high.fetch_max(fraction.to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -141,8 +165,12 @@ pub(crate) fn begin(total: usize) -> Evaluation {
         let Some(cur) = c.as_mut() else { return false };
         cur.depth += 1;
         if cur.depth == 1 {
-            cur.progress.total.store(total, Ordering::Relaxed);
-            cur.progress.done.store(0, Ordering::Relaxed);
+            let progress = &cur.progress;
+            // The rebuild before this one is done: its features stay on the bar.
+            let previous = progress.last_total.swap(total, Ordering::Relaxed);
+            progress.finished.fetch_add(previous, Ordering::Relaxed);
+            progress.total.store(total, Ordering::Relaxed);
+            progress.done.store(0, Ordering::Relaxed);
             true
         } else {
             false
@@ -219,6 +247,26 @@ impl Drop for Evaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file that is imported and then rebuilt again (a board's copper) must not restart the
+    /// bar: the features of the earlier rebuild stay counted.
+    #[test]
+    fn a_later_rebuild_keeps_the_progress_rising() {
+        let p = Arc::new(Progress::default());
+        watch(p.clone(), || {
+            let first = begin(1);
+            assert!(!first.step(0));
+            assert_eq!(p.overall(), (0, 1));
+            drop(first);
+            assert_eq!(p.overall(), (1, 1));
+            let second = begin(3);
+            assert_eq!(p.features(), (0, 3), "the rebuild has its own count");
+            assert_eq!(p.overall(), (1, 4), "and the bar keeps what came before");
+            assert!(!second.step(2));
+            assert_eq!(p.overall(), (3, 4));
+        });
+        assert_eq!(p.overall(), (4, 4));
+    }
 
     #[test]
     fn unwatched_evaluations_never_stop_and_watched_ones_report_and_stop() {
