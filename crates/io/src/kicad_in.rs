@@ -673,6 +673,71 @@ fn parse_via(expr: &Expr<'_>, warnings: &mut Vec<String>) -> Option<KicadVia> {
     Some(KicadVia { at, size, drill, layers })
 }
 
+/// The details a contour can lose before it is extruded (mm): KiCad's fills leave repeated
+/// points, needles and straight runs whose faces are degenerate — the mesh path smooths them
+/// away, but an extrusion turns each into a sliver standing out of the copper.
+const CONTOUR_DETAIL: f64 = 0.02;
+
+/// A filled contour without its degenerate details, or `None` when what is left is no polygon.
+fn clean_contour(points: &[[f64; 2]]) -> Option<Vec<[f64; 2]>> {
+    let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) <= CONTOUR_DETAIL;
+    let mut pts: Vec<[f64; 2]> = Vec::with_capacity(points.len());
+    for &p in points {
+        if !(p[0].is_finite() && p[1].is_finite()) {
+            return None;
+        }
+        if pts.last().is_none_or(|q: &[f64; 2]| !near(*q, p)) {
+            pts.push(p);
+        }
+    }
+    if pts.len() > 2 && pts.first().zip(pts.last()).is_some_and(|(first, last)| near(*first, *last)) {
+        pts.pop();
+    }
+    // Needles: a tip whose two neighbours nearly meet adds nothing but a sliver.
+    while pts.len() > 3 {
+        let n = pts.len();
+        let mut kept = Vec::with_capacity(n);
+        for i in 0..n {
+            let (prev, next) = (pts[(i + n - 1) % n], pts[(i + 1) % n]);
+            if near(prev, next) {
+                continue;
+            }
+            if let Some(point) = pts.get(i) {
+                kept.push(*point);
+            }
+        }
+        if kept.len() >= 3 {
+            if kept.len() == pts.len() {
+                break;
+            }
+            pts = kept;
+        } else {
+            break;
+        }
+    }
+    // Straight runs: only their ends are corners.
+    if pts.len() > 3 {
+        let n = pts.len();
+        let mut kept = Vec::with_capacity(n);
+        for i in 0..n {
+            let (prev, cur, next) = (pts[(i + n - 1) % n], pts[i], pts[(i + 1) % n]);
+            let (ax, ay) = (cur[0] - prev[0], cur[1] - prev[1]);
+            let (bx, by) = (next[0] - cur[0], next[1] - cur[1]);
+            let cross = ax * by - ay * bx;
+            let dot = ax * bx + ay * by;
+            let scale = (ax.hypot(ay) * bx.hypot(by)).max(1.0);
+            if cross.abs() <= 1e-9 * scale && dot > 0.0 {
+                continue;
+            }
+            kept.push(cur);
+        }
+        if kept.len() >= 3 {
+            pts = kept;
+        }
+    }
+    (pts.len() >= 3).then_some(pts)
+}
+
 /// A copper zone's filled polygons, one zone per layer they lie on. KiCad 9 writes a zone that
 /// spans layers as `(layers "F.Cu" "B.Cu")` with a `filled_polygon` per layer, so the fill's own
 /// layer decides (the zone's `(layer …)` is the fallback).
@@ -683,7 +748,7 @@ fn parse_zone(expr: &Expr<'_>, warnings: &mut Vec<String>) -> Vec<KicadZone> {
     for fill in children(expr).iter().filter(|e| head(e) == Some("filled_polygon")) {
         let layer = layer_of(fill).or_else(|| zone_layer.clone());
         let Some(layer) = layer.filter(|layer| is_outer_copper(layer)) else { continue };
-        let Some(points) = poly_points(fill) else { continue };
+        let Some(points) = poly_points(fill).and_then(|points| clean_contour(&points)) else { continue };
         total = total.saturating_add(points.len());
         if total > MAX_ZONE_POINTS {
             warnings.push("a copper zone was too large and was skipped".into());

@@ -568,3 +568,14 @@ fn a_zone_spanning_both_sides_brings_both_fills() {
         assert!((area - 8.0 * 6.0).abs() < 1e-6, "{name}: {area}");
     }
 }
+
+/// KiCad's fills leave repeated points, needle tips and straight-run points: extruded as they are
+/// they make slivers standing out of the copper, so a contour loses them first.
+#[test]
+fn a_fill_contour_loses_its_degenerate_details() {
+    let points = [[0.0, 0.0], [10.0, 0.0], [10.0, 0.0], [10.0, 5.0], [10.001, 5.0], [10.0, 5.0], [10.0, 10.0], [5.0, 10.0], [0.0, 10.0], [0.0, 5.0]];
+    let cleaned = clean_contour(&points).expect("a polygon");
+    // The repeated points, the needle at (10.001, 5) and the middles of the straight sides go.
+    assert_eq!(cleaned, vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]], "{cleaned:?}");
+    assert!(clean_contour(&[[0.0, 0.0], [1.0, 0.0]]).is_none(), "two points are no polygon");
+}
