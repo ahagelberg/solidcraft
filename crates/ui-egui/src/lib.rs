@@ -3075,6 +3075,11 @@ impl SolveApp {
         let floating = render_workspace::active(self) || ui_kit::Container::new(ui.ctx(), ui_kit::Surface::Panel).floating();
         timeline::follow_view_pick(self);
         render_ui::focus_shortcut(self, ui);
+        // Docked beside the toolbar, the Designs browser takes its column before the bar lay out
+        // the rest of the frame.
+        if !designs_shown && !render_ui::focused(self) {
+            designs_panel::show(self, ui);
+        }
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self) && !self.preferences.history_in_browser;
         let left_timeline = show_timeline && self.preferences.timeline_left;
         timeline_left::animate_folds(self, ui.ctx());
@@ -3146,9 +3151,6 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_ui::shots_strip(self, ui);
             render_workspace::panel(self, ui);
-        }
-        if !designs_shown && !render_ui::focused(self) {
-            designs_panel::show(self, ui);
         }
         if self.ui.show_browser && !render_ui::focused(self) {
             browser::browser(self, ui);
