@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: bool (default false: the front and back copper and copper text); pads?: bool (default true, with copper); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (B-rep is not supported yet)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"none\" (default: leave the traces out), \"overlay\" (a flat copper surface on the board), \"mesh\" (modelled with thickness; true also means mesh) or \"brep\" (not supported yet); pads?: bool (default true, with copper); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (the board itself; B-rep is not supported yet)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -244,14 +244,22 @@ fn kicad_options(p: &Value, cmd: &str) -> Result<solidcraft_io::KicadOptions> {
         }
         options.thickness = Some(value);
     }
-    for (key, slot) in [
-        ("components", &mut options.components),
-        ("copper", &mut options.copper),
-        ("pads", &mut options.pads),
-        ("silkscreen", &mut options.silkscreen),
-    ] {
+    for (key, slot) in [("components", &mut options.components), ("pads", &mut options.pads), ("silkscreen", &mut options.silkscreen)] {
         if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
             *slot = v.as_bool().ok_or_else(|| bad(cmd, format!("`{key}` must be true or false")))?;
+        }
+    }
+    if let Some(v) = p.get("copper").filter(|v| !v.is_null()) {
+        options.copper = match v.as_bool() {
+            Some(true) => solidcraft_io::KicadCopper::Mesh,
+            Some(false) => solidcraft_io::KicadCopper::None,
+            None => {
+                let name = v.as_str().ok_or_else(|| bad(cmd, "`copper` must be true, false, \"none\", \"overlay\", \"mesh\" or \"brep\""))?;
+                solidcraft_io::KicadCopper::parse(name).ok_or_else(|| bad(cmd, "`copper` must be \"none\", \"overlay\", \"mesh\" or \"brep\""))?
+            }
+        };
+        if options.copper == solidcraft_io::KicadCopper::Brep {
+            return Err(EngineError::Other("not supported yet: B-rep KiCad copper (choose overlay or modelled mesh)".into()));
         }
     }
     if let Some(v) = p.get("color").filter(|v| !v.is_null()) {

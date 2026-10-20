@@ -152,7 +152,8 @@ fn import_options_build_copper_silk_and_a_colour_and_keep_the_plan_flat() {
       (segment (start 1 2) (end 10 2) (width 0.3) (layer "F.Cu") (net 1))
       (footprint "part" (at 5 5) (layer "F.Cu")
         (pad "1" smd rect (at 0 0) (size 1 2) (layers "F.Cu" "F.Paste"))))"#;
-    let options = KicadOptions { copper: true, silkscreen: true, components: false, color: Some([0x11, 0x22, 0x33]), ..Default::default() };
+    let options =
+        KicadOptions { copper: KicadCopper::Mesh, silkscreen: true, components: false, color: Some([0x11, 0x22, 0x33]), ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "board.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -174,7 +175,7 @@ fn a_filled_zone_adds_copper_next_to_tracks() {
       (segment (start -20 -12) (end 0 -12) (width 1.2) (layer "B.Cu") (net 1))
       (zone (net 1) (net_name "GND") (layer "B.Cu")
         (filled_polygon (layer "B.Cu") (pts (xy -24 16) (xy -14 16) (xy -14 18) (xy -24 18)))))"#;
-    let options = KicadOptions { copper: true, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Mesh, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "board.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -230,7 +231,7 @@ fn text_on_silk_and_copper_is_built_and_mirrored_text_flips() {
         (effects (font (size 2 2) (thickness 0.2)) (justify mirror)))
       (gr_text "CU" (at 0 4) (layer "F.Cu")
         (effects (font (size 2 2) (thickness 0.2)))))"#;
-    let options = KicadOptions { copper: true, silkscreen: true, components: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Mesh, silkscreen: true, components: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "text.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -291,6 +292,40 @@ fn modern_property_fields_on_a_text_layer_are_text() {
     assert_eq!(footprint.texts[0].text, "R1");
     assert_eq!(footprint.texts[0].layer, "F.SilkS");
     assert_eq!(footprint.texts[0].at, [0.0, -3.0, 0.0]);
+}
+
+#[test]
+fn copper_overlay_is_a_flat_face_on_the_board() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (segment (start 1 2) (end 10 2) (width 0.3) (layer "F.Cu") (net 1))
+      (zone (net 1) (net_name "VCC") (layer "B.Cu") (filled_polygon
+        (layer "B.Cu") (pts (xy 1 5) (xy 5 5) (xy 5 8) (xy 1 8)))))"#;
+    let options = KicadOptions { copper: KicadCopper::Overlay, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "overlay.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    let find = |name: &str| meshes.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} is missing"));
+    let front = find("Copper F.Cu");
+    let back = find("Copper B.Cu");
+    let zs: Vec<f64> = front.positions.as_chunks::<3>().0.iter().map(|p| p[2]).collect();
+    assert!(zs.iter().all(|z| (z - 1.6).abs() < 1e-9 || (z - 1.601).abs() < 1e-9), "{zs:?}");
+    let zs: Vec<f64> = back.positions.as_chunks::<3>().0.iter().map(|p| p[2]).collect();
+    assert!(zs.iter().all(|z| z.abs() < 1e-9 || (z + 0.001).abs() < 1e-9), "{zs:?}");
+    // The film is a thin closed solid: it builds, with a tiny (positive) volume.
+    let positions: Vec<Vec3> = front.positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect();
+    let triangles: Vec<[u32; 3]> = front.triangles.as_chunks::<3>().0.to_vec();
+    let body = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
+    let measure = solidcraft_kernel::measure(&body).unwrap();
+    assert!(measure.volume > 0.0 && measure.volume < 0.1, "{measure:?}");
+}
+
+#[test]
+fn b_rep_copper_is_refused() {
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let error = read_kicad(BOARD.as_bytes(), "test.kicad_pcb", &options, &mut load).err().expect("B-rep copper must be refused");
+    assert!(error.to_string().contains("B-rep"), "{error}");
 }
 
 #[test]

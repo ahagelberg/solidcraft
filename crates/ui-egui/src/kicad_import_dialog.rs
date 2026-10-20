@@ -1,11 +1,12 @@
 //! Import settings for a KiCad board.
 //!
 //! Opening a board asks what comes in with it: the referenced 3D models, the front and back
-//! copper (and its pads), the silkscreen and its text, the substrate colour and the thickness.
-//! The chosen values are the `doc.open` options, so the same board can be opened again from a
-//! script or the control channel.
+//! copper (and its pads) as an overlay or modelled, the silkscreen and its text, the substrate
+//! colour and the thickness. The chosen values are the `doc.open` options, so the same board can
+//! be opened again from a script or the control channel.
 
 use serde_json::{Value, json};
+use solidcraft_engine::io::KicadCopper;
 
 use crate::SolveApp;
 
@@ -14,7 +15,7 @@ use crate::SolveApp;
 pub struct Dialog {
     pub path: String,
     pub components: bool,
-    pub copper: bool,
+    pub copper: KicadCopper,
     pub pads: bool,
     pub silkscreen: bool,
     /// Use the board's own `general.thickness` (otherwise `thickness`).
@@ -28,7 +29,7 @@ impl Dialog {
         Dialog {
             path: path.to_string(),
             components: true,
-            copper: false,
+            copper: KicadCopper::None,
             pads: true,
             silkscreen: true,
             board_thickness: true,
@@ -41,7 +42,7 @@ impl Dialog {
     pub fn params(&self) -> Value {
         let mut params = json!({
             "components": self.components,
-            "copper": self.copper,
+            "copper": self.copper.as_str(),
             "pads": self.pads,
             "silkscreen": self.silkscreen,
             "color": format!("#{:02x}{:02x}{:02x}", self.color[0], self.color[1], self.color[2]),
@@ -56,6 +57,9 @@ impl Dialog {
 
     /// Why the options cannot be imported yet, if they cannot.
     fn problem(&self) -> Option<&'static str> {
+        if self.copper == KicadCopper::Brep {
+            return Some("B-rep KiCad copper is not supported yet; choose Overlay or Modelled (mesh).");
+        }
         if !self.board_thickness && (!self.thickness.is_finite() || self.thickness <= 0.0 || self.thickness > 1000.0) {
             return Some("Board thickness must be greater than 0 and at most 1000 mm.");
         }
@@ -89,12 +93,25 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.label(crate::i18n::tr_label("STEP and VRML models referenced by footprints"));
                 ui.end_row();
 
-                let r = ui.checkbox(&mut dialog.copper, crate::i18n::tr_label("Copper layers"));
-                crate::scenario::publish_handle("kicad:copper", r.rect.center());
-                ui.label(crate::i18n::tr_label("Tracks, vias, zones and pads on the front and back"));
+                ui.label(crate::i18n::tr_label("Copper (traces, vias, zones, pads)"));
+                ui.vertical(|ui| {
+                    for (mode, label) in [
+                        (KicadCopper::None, "None"),
+                        (KicadCopper::Overlay, "Overlay on the board"),
+                        (KicadCopper::Mesh, "Modelled (mesh)"),
+                        (KicadCopper::Brep, "Modelled (B-rep)"),
+                    ] {
+                        let r = ui.radio(dialog.copper == mode, crate::i18n::tr_label(label));
+                        crate::scenario::publish_handle(&format!("kicad:copper:{}", mode.as_str()), r.rect.center());
+                        if r.clicked() {
+                            dialog.copper = mode;
+                        }
+                    }
+                });
                 ui.end_row();
 
-                let r = ui.add_enabled(dialog.copper, egui::Checkbox::new(&mut dialog.pads, crate::i18n::tr_label("Include pads")));
+                let r =
+                    ui.add_enabled(dialog.copper != KicadCopper::None, egui::Checkbox::new(&mut dialog.pads, crate::i18n::tr_label("Include pads")));
                 crate::scenario::publish_handle("kicad:pads", r.rect.center());
                 ui.label(crate::i18n::tr_label("Pad copper is included with the copper layers"));
                 ui.end_row();
@@ -116,15 +133,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     egui::DragValue::new(&mut dialog.thickness).speed(0.1).range(0.01..=1000.0).suffix(" mm").max_decimals(3),
                 );
                 crate::scenario::publish_handle("kicad:thickness", t.rect.center());
-                ui.end_row();
-
-                ui.label(crate::i18n::tr_label("Representation"));
-                ui.vertical(|ui| {
-                    let r = ui.radio(true, crate::i18n::tr_label("Mesh bodies"));
-                    crate::scenario::publish_handle("kicad:mesh", r.rect.center());
-                    ui.add_enabled(false, egui::RadioButton::new(false, crate::i18n::tr_label("B-rep (not supported yet)")))
-                        .on_disabled_hover_text(crate::i18n::tr_label("B-rep KiCad imports are not supported yet"));
-                });
                 ui.end_row();
             });
             if let Some(problem) = dialog.problem() {
@@ -173,13 +181,13 @@ mod tests {
     fn params_name_only_the_chosen_options() {
         let mut d = Dialog::new("board.kicad_pcb");
         d.components = false;
-        d.copper = true;
+        d.copper = KicadCopper::Overlay;
         d.pads = false;
         d.silkscreen = false;
         d.color = [1, 2, 3];
         let p = d.params();
         assert_eq!(p["components"], json!(false));
-        assert_eq!(p["copper"], json!(true));
+        assert_eq!(p["copper"], json!("overlay"));
         assert_eq!(p["pads"], json!(false));
         assert_eq!(p["silkscreen"], json!(false));
         assert_eq!(p["color"], json!("#010203"));
@@ -218,32 +226,49 @@ mod tests {
     }
 
     #[test]
+    fn b_rep_copper_is_refused_in_the_window() {
+        let mut d = Dialog::new("board.kicad_pcb");
+        d.copper = KicadCopper::Brep;
+        assert!(d.problem().is_some(), "B-rep copper is not supported yet");
+        d.copper = KicadCopper::Mesh;
+        assert!(d.problem().is_none());
+    }
+
+    #[test]
     fn the_window_follows_its_switches_and_imports() {
         let mut h = crate::scenario::Harness::new();
         open(&mut h.app, "board.kicad_pcb");
         h.frames(2);
-        for label in ["3D component models", "Copper layers", "Silkscreen", "Mesh bodies"] {
+        for label in [
+            "3D component models",
+            "Copper (traces, vias, zones, pads)",
+            "None",
+            "Overlay on the board",
+            "Modelled (mesh)",
+            "Modelled (B-rep)",
+            "Silkscreen",
+        ] {
             assert!(h.widget(label).is_some(), "`{label}` is missing");
         }
-        // Pads belong to the copper, so they wait for the copper switch.
+        // Pads belong to the copper, so they wait for a copper mode.
         h.step(&json!({"click": {"handle": "kicad:pads"}})).unwrap();
         h.frames(1);
         assert_eq!(h.app.kicad_import.as_ref().map(|d| d.pads), Some(true));
-        h.step(&json!({"click": {"handle": "kicad:copper"}})).unwrap();
+        h.step(&json!({"click": {"handle": "kicad:copper:mesh"}})).unwrap();
         h.frames(1);
         h.step(&json!({"click": {"handle": "kicad:pads"}})).unwrap();
         h.frames(1);
         h.step(&json!({"click": {"handle": "kicad:silkscreen"}})).unwrap();
         h.frames(1);
         let d = h.app.kicad_import.as_ref().unwrap();
-        assert_eq!((d.copper, d.pads, d.silkscreen), (true, false, false), "{d:?}");
+        assert_eq!((d.copper, d.pads, d.silkscreen), (KicadCopper::Mesh, false, false), "{d:?}");
         // Cancel leaves the design and the background queue alone.
         h.step(&json!({"click": {"handle": "kicad:cancel"}})).unwrap();
         h.frames(1);
         assert!(h.app.kicad_import.is_none() && !h.app.file_load.busy());
         assert!(h.app.session.doc.features.is_empty());
 
-        // Import hands the switches to the command and the board comes in with its copper.
+        // Import hands the switches to the command and the board comes in with copper overlay.
         let path = std::env::temp_dir().join(format!("kicad_dialog_{}.kicad_pcb", std::process::id()));
         std::fs::write(
             &path,
@@ -255,7 +280,7 @@ mod tests {
         .unwrap();
         open(&mut h.app, &path.to_string_lossy());
         h.frames(2);
-        h.step(&json!({"click": {"handle": "kicad:copper"}})).unwrap();
+        h.step(&json!({"click": {"handle": "kicad:copper:overlay"}})).unwrap();
         h.frames(1);
         h.step(&json!({"click": {"handle": "kicad:import"}})).unwrap();
         h.settle();

@@ -43,6 +43,8 @@ const CURVE_TOLERANCE: f64 = 0.02;
 const MAX_CURVE_SEGMENTS: usize = 4_096;
 /// Copper foil thickness (1 oz) in millimetres.
 const COPPER_THICKNESS: f64 = 0.035;
+/// The copper overlay's thickness (mm): a thin film on the board surface.
+const OVERLAY_THICKNESS: f64 = 0.001;
 /// Silkscreen ink thickness in millimetres.
 const SILK_THICKNESS: f64 = 0.01;
 
@@ -69,6 +71,43 @@ impl KicadRepresentation {
     }
 }
 
+/// How the board's copper (tracks, vias, zones, pads and copper text) comes in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum KicadCopper {
+    /// Leave the copper out.
+    #[default]
+    None,
+    /// A flat copper surface on the board, without thickness: an overlay for the board's look.
+    Overlay,
+    /// Copper with its real thickness, as mesh bodies.
+    Mesh,
+    /// Exact B-rep copper. Not supported yet.
+    Brep,
+}
+
+impl KicadCopper {
+    /// `none`, `overlay`, `mesh`/`modelled`/`modeled` or `brep` (any case).
+    pub fn parse(s: &str) -> Option<KicadCopper> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "none" | "off" => Some(KicadCopper::None),
+            "overlay" => Some(KicadCopper::Overlay),
+            "mesh" | "modelled" | "modeled" => Some(KicadCopper::Mesh),
+            "brep" | "b-rep" => Some(KicadCopper::Brep),
+            _ => None,
+        }
+    }
+
+    /// The option's parameter value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KicadCopper::None => "none",
+            KicadCopper::Overlay => "overlay",
+            KicadCopper::Mesh => "mesh",
+            KicadCopper::Brep => "brep",
+        }
+    }
+}
+
 /// What the importer brings in besides the board substrate.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KicadOptions {
@@ -76,9 +115,9 @@ pub struct KicadOptions {
     pub thickness: Option<f64>,
     /// Load the referenced 3D models (STEP and VRML).
     pub components: bool,
-    /// Build the front and back copper layers (tracks, vias, pads and zones).
-    pub copper: bool,
-    /// Include pads in the copper layers (only with `copper`).
+    /// The front and back copper: left out, an overlay, or modelled with thickness.
+    pub copper: KicadCopper,
+    /// Include pads in the copper (when it is not left out).
     pub pads: bool,
     /// Build the front and back silkscreen.
     pub silkscreen: bool,
@@ -93,7 +132,7 @@ impl Default for KicadOptions {
         KicadOptions {
             thickness: None,
             components: true,
-            copper: false,
+            copper: KicadCopper::None,
             pads: true,
             silkscreen: true,
             color: None,
@@ -721,6 +760,9 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
     if options.representation == KicadRepresentation::Brep {
         return Err(IoError::Invalid("B-rep KiCad boards are not supported yet; choose mesh".into()));
     }
+    if options.copper == KicadCopper::Brep {
+        return Err(IoError::Invalid("B-rep KiCad copper is not supported yet; choose overlay or modelled mesh".into()));
+    }
     let board = parse_kicad_board_with(bytes, file, options.clone())?;
     let thickness = options.thickness.unwrap_or(board.thickness);
     let board_mesh = kicad_board_mesh(&board, thickness)?;
@@ -842,8 +884,8 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
             }
         }
     }
-    if options.copper {
-        for (mesh, layer) in copper_meshes(&board, options.pads, thickness, &mut warnings) {
+    if options.copper != KicadCopper::None {
+        for (mesh, layer) in copper_meshes(&board, options.pads, thickness, options.copper, &mut warnings) {
             meshes.push(mesh_data(format!("Copper {layer}"), mesh.positions, mesh.triangles, Some([0.72, 0.45, 0.20])));
             plan.bodies.push(None);
         }
@@ -1322,13 +1364,7 @@ impl Plate {
         if !(radius.is_finite() && radius > 1e-9) {
             return;
         }
-        let n = ((std::f64::consts::TAU * radius / CURVE_TOLERANCE).ceil() as usize).clamp(8, MAX_CURVE_SEGMENTS.min(256));
-        let points: Vec<[f64; 2]> = (0..n)
-            .map(|i| {
-                let a = std::f64::consts::TAU * i as f64 / n as f64;
-                [center[0] + radius * a.cos(), center[1] + radius * a.sin()]
-            })
-            .collect();
+        let points = circle_points(center, radius);
         self.add_loop(&points, z0, z1);
     }
 
@@ -1337,12 +1373,18 @@ impl Plate {
     }
 }
 
-/// Front and back copper plates: tracks, vias, pads and zones.
-fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Vec<String>) -> Vec<(Plate, &'static str)> {
+/// Front and back copper plates: tracks, vias, pads and zones, modelled with their thickness or
+/// as a thin film overlaid on the board's surfaces.
+fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopper, warnings: &mut Vec<String>) -> Vec<(Plate, &'static str)> {
     let mut front = Plate::default();
     let mut back = Plate::default();
-    let (top, bottom) = (thickness, thickness + COPPER_THICKNESS);
-    let (under, under_top) = (-COPPER_THICKNESS, 0.0);
+    // Modelled copper has its real thickness; an overlay is a thin film on the board's
+    // surfaces (below the silkscreen).
+    let (top, bottom, under, under_top) = if mode == KicadCopper::Overlay {
+        (thickness, thickness + OVERLAY_THICKNESS, -OVERLAY_THICKNESS, 0.0)
+    } else {
+        (thickness, thickness + COPPER_THICKNESS, -COPPER_THICKNESS, 0.0)
+    };
     let mut items = 0usize;
     let mut too_many = false;
     let mut add = |plate: &mut Plate, f: &dyn Fn(&mut Plate)| {
@@ -1355,21 +1397,21 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut 
     };
     for track in &board.tracks {
         let points: Vec<[f64; 2]> = track.points.iter().map(|p| [p[0], -p[1]]).collect();
-        let (z0, z1) = if track.layer == "F.Cu" { (top, bottom) } else { (under, under_top) };
-        let plate = if track.layer == "F.Cu" { &mut front } else { &mut back };
+        let front_side = track.layer == "F.Cu";
+        let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
+        let plate = if front_side { &mut front } else { &mut back };
         add(plate, &|p| p.add_track(&points, track.width, z0, z1));
     }
     for via in &board.vias {
         let center = [via.at[0], -via.at[1]];
-        let (z0, z1) = (under, bottom);
+        let radius = via.size * 0.5;
         let two_sided = via.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
         if two_sided || via.layers.iter().any(|l| l == "F.Cu") {
-            add(&mut front, &|p| p.add_circle(center, via.size * 0.5, top, bottom));
+            add(&mut front, &|p| p.add_circle(center, radius, top, bottom));
         }
         if two_sided || via.layers.iter().any(|l| l == "B.Cu") {
-            add(&mut back, &|p| p.add_circle(center, via.size * 0.5, under, under_top));
+            add(&mut back, &|p| p.add_circle(center, radius, under, under_top));
         }
-        let _ = (z0, z1);
     }
     for zone in &board.zones {
         let contours: Vec<Loop2> = zone
@@ -1384,12 +1426,11 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut 
             continue;
         }
         let regions = regions_from_loops(contours, None);
-        let (z0, z1) = if zone.layer == "F.Cu" { (top, bottom) } else { (under, under_top) };
+        let front_side = zone.layer == "F.Cu";
+        let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
+        let plate = if front_side { &mut front } else { &mut back };
         match extrude_regions(&regions, z0, z1) {
-            Ok(mesh) => {
-                let plate = if zone.layer == "F.Cu" { &mut front } else { &mut back };
-                plate.add_mesh(mesh.positions, mesh.triangles);
-            }
+            Ok(mesh) => plate.add_mesh(mesh.positions, mesh.triangles),
             Err(_) => warnings.push(format!("a copper zone on {} could not be built", zone.layer)),
         }
     }
@@ -1420,9 +1461,10 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut 
         if !is_outer_copper(layer) {
             continue;
         }
+        let front_side = layer == "F.Cu";
         let points: Vec<[f64; 2]> = graphic.points.iter().map(|p| [p[0], -p[1]]).collect();
-        let (z0, z1) = if layer == "F.Cu" { (top, bottom) } else { (under, under_top) };
-        let plate = if layer == "F.Cu" { &mut front } else { &mut back };
+        let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
+        let plate = if front_side { &mut front } else { &mut back };
         if graphic.filled && points.len() >= 3 {
             add(plate, &|p| p.add_loop(&points, z0, z1));
         } else {
@@ -1435,9 +1477,10 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut 
             if !is_outer_copper(&text.layer) {
                 return;
             }
-            let (z0, z1) = if text.layer == "F.Cu" { (top, bottom) } else { (under, under_top) };
-            let plate = if text.layer == "F.Cu" { &mut front } else { &mut back };
+            let front_side = text.layer == "F.Cu";
+            let plate = if front_side { &mut front } else { &mut back };
             let failed = std::cell::Cell::new(false);
+            let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
             add(plate, &|p| failed.set(failed.get() || !add_text_plate(p, text, origin, angle, z0, z1)));
             if failed.get() {
                 text_failed = true;

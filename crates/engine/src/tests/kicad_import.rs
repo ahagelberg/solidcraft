@@ -164,6 +164,26 @@ fn copper_silk_colour_and_component_options_are_honoured_and_persist() {
 }
 
 #[test]
+fn copper_modes_choose_an_overlay_modelled_copper_or_nothing() {
+    let dir = temp_dir("copper-modes");
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+  (segment (start 1 2) (end 10 2) (width 0.3) (layer "F.Cu") (net 1)))"#;
+    let board = build_board(&dir, source);
+    let mut s = Session::default();
+    let result = run(&mut s, "doc.open", json!({"path": board, "copper": "overlay", "components": false, "silkscreen": false}));
+    let names: Vec<String> = result["bodies"].as_array().unwrap().iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+    assert!(names.iter().any(|n| n == "Copper F.Cu"), "{names:?}");
+    let mut s = Session::default();
+    let result = run(&mut s, "doc.open", json!({"path": board, "copper": "none", "components": false, "silkscreen": false}));
+    let names: Vec<String> = result["bodies"].as_array().unwrap().iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+    assert!(!names.iter().any(|n| n == "Copper F.Cu"), "{names:?}");
+    let error = s.execute("doc.open", &json!({"path": board, "copper": "brep"})).expect_err("B-rep copper must be refused");
+    assert!(error.to_string().contains("not supported yet"), "{error}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn b_rep_is_refused() {
     let mut s = Session::default();
     let board = std::env::temp_dir().join(format!("solidcraft-kicad-brep-{}.kicad_pcb", std::process::id()));
