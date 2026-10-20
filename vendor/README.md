@@ -45,6 +45,12 @@ Changes:
   operand's shell meshes made beforehand (copied for each use, since the loops stores cut their
   edges): a large body cut down to the regions of many small ones is meshed once, which was most
   of each operation's time.
+- `transversal/integrate/mod.rs`: in an AND, a face no intersection divides (a shell that meets
+  nothing of the other) is placed by the crossings of a ray with the other shell counted as each
+  face is oriented, not by its surface alone, and an inward shell (a void, a cut's inverted tool)
+  holds what lies outside it. Faces with reversed surfaces (a revolved body's) counted the wrong
+  way, and a void dropped every face outside it: a cut beside a sealed void came out empty or
+  with the body gone. An OR keeps truck's count.
 
 ## truck-geometry 0.5.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
@@ -190,6 +196,14 @@ Changes:
   point of the face's edges now goes to that point, when it is within the chord tolerance
   (`onto_edges`). Points within `TOLERANCE` stay on the surface, so exact geometry meshes as
   before. The meshes Boolean operations intersect keep truck's points.
+- `tessellation/triangulation.rs`: a face whose boundary touches itself or another of its loops
+  within `TOLERANCE` (pinched to a point where a body touches its edge, #1648) can cross there by
+  less than that. A segment that would cross one already added was left out of the triangulation,
+  and the fallback that joins the next point instead cut across the face: such a face came out
+  with no triangles, or without those at the pinch, depending on which segment went in first.
+  When a segment is left out, every boundary point within `TOLERANCE` of a segment, away from its
+  ends, is put into it (`pinched`: at most 8192 boundary points, and at most 8192 put in), and
+  the face is triangulated again. Faces whose segments all go in are triangulated as before.
 
 - `tessellation/triangulation.rs`: in display and export meshes (`Deflection::rulings`), a
   direction left undivided along the rulings of a face ruled one way also gets a grid line

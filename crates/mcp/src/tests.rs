@@ -88,6 +88,7 @@ fn handshake_and_tools_list() {
     let names: Vec<&str> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     for want in [
         "list_commands",
+        "describe_command",
         "execute",
         "batch",
         "inspect_design",
@@ -1479,7 +1480,7 @@ fn tool_annotations_tell_the_whole_truth() {
     for name in ["execute", "batch", "save", "export", "open", "screenshot"] {
         assert_eq!(hints(name), (false, true, true), "{name}");
     }
-    for name in ["list_commands", "inspect_design", "measure", "body_topology", "crash_reports"] {
+    for name in ["list_commands", "describe_command", "inspect_design", "measure", "body_topology", "crash_reports"] {
         assert_eq!(hints(name), (true, false, false), "{name}");
     }
     assert_eq!(hints("new_design"), (false, true, false));
@@ -1546,4 +1547,25 @@ fn batch_reports_timings_and_profile() {
     let (_, body, _) = recorded_batch(Err("unknown method `engine.batch`".into()), json!({"commands": [{"command": "a.one"}], "profile": true}));
     assert_eq!(body["timings"][0]["command"], "a.one", "{body}");
     assert!(body["timings"][0].get("profile").is_none(), "{body}");
+}
+
+/// `describe_command` serves a converted command's schemas, and a headless session set to strict
+/// refuses a misspelt key through `execute` without touching the design.
+#[test]
+fn describe_command_and_strict_parameter_checking() {
+    let mut s = server();
+    let d = tool(&mut s, "describe_command", json!({"id": "solid.box"}));
+    assert!(d["input"]["properties"].get("operation").is_some(), "{d}");
+    assert!(d["output"]["properties"].get("created_bodies").is_some(), "{d}");
+
+    let mut headless = Headless::default();
+    headless.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
+    let mut s = Server::new(Box::new(headless));
+    call(&mut s, 1, "initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}));
+    let r = raw_tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 5, "width": 5, "height": 5, "operaton": "cut"}}));
+    assert_eq!(r["result"]["isError"], json!(true), "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("unknown key `operaton`; did you mean `operation`?"), "{text}");
+    let m = tool(&mut s, "measure", json!({}));
+    assert_eq!(m["body_count"], json!(0), "{m}");
 }

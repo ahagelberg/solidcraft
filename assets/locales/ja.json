@@ -451,6 +451,7 @@
   "cmd.edit_checkpoint": "チェックポイント",
   "cmd.edit_restore_checkpoint": "チェックポイントを復元",
   "cmd.engine_commands": "コマンドを一覧表示",
+  "cmd.engine_describe": "コマンドの詳細を表示",
   "cmd.explode_create": "分解図",
   "cmd.explode_delete": "分解図を削除",
   "cmd.explode_list": "分解図を一覧表示",

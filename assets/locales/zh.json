@@ -451,6 +451,7 @@
   "cmd.edit_checkpoint": "检查点",
   "cmd.edit_restore_checkpoint": "恢复检查点",
   "cmd.engine_commands": "列出命令",
+  "cmd.engine_describe": "描述命令",
   "cmd.explode_create": "爆炸图",
   "cmd.explode_delete": "删除爆炸图",
   "cmd.explode_list": "列出爆炸图",

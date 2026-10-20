@@ -5854,7 +5854,7 @@ impl PlacedBodies {
                 fresh.plan_mesh = placed.plan_mesh.clone();
                 fresh
             }
-            None => match kernel::transform_matrix(&b.body, *m) {
+            None => match kernel::place_matrix(&b.body, *m) {
                 Ok(body) => {
                     let mut fresh = ModelBody::new(name, body, b.feature);
                     fresh.mesh_placement = placed_mesh::PlacedMesh::new(b, m).map(Arc::new);

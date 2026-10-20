@@ -1233,8 +1233,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.lookAt" => {
             let st = app.session.world_state();
             if let Some(ss) = id_of(&p, "sketch").and_then(|id| st.sketch(id)) {
-                let mut to = app.cam.looking_from(ss.plane.normal());
-                to.target = ss.plane.origin;
+                let to = crate::dialogs::onto_sketch(app.cam.looking_from(ss.plane.normal()), ss);
                 app.animate_to(to);
             }
         }

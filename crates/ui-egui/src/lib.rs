@@ -81,6 +81,8 @@ mod linked_source;
 pub mod local_time;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
+#[cfg(test)]
+mod look_at_tests;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;

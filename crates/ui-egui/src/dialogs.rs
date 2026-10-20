@@ -3689,9 +3689,29 @@ fn look_at_sketch_from(app: &mut SolveApp, again: bool) {
             let x = ss.plane.x;
             to.yaw = if n.z > 0.0 { (-x.y).atan2(x.x) } else { x.y.atan2(x.x) };
         }
-        to.target = ss.plane.origin;
-        app.animate_to(to);
+        app.animate_to(onto_sketch(to, ss));
     }
+}
+
+/// `to` (already facing the sketch) moved onto sketch `ss` (#3198): centred on its geometry, and
+/// zoomed out when that would not fit in the view; it never zooms in, so a zoom the user chose
+/// stays. A sketch without geometry keeps its plane's origin. Centring on the origin alone left a
+/// sketch drawn away from it (a part placed far from the origin, as imports often are) out of view.
+pub(crate) fn onto_sketch(mut to: solidcraft_engine::render::Camera, ss: &solidcraft_engine::doc::SolvedSketch) -> solidcraft_engine::render::Camera {
+    let Some((lo, hi)) = ss.sketch.bounds() else {
+        to.target = ss.plane.origin;
+        return to;
+    };
+    let mut b = Aabb3::default();
+    for p in [lo, hi, solidcraft_engine::geom::Vec2::new(lo.x, hi.y), solidcraft_engine::geom::Vec2::new(hi.x, lo.y)] {
+        b.add(ss.plane.to_world(p));
+    }
+    let keep = to.distance;
+    to.fit(&b);
+    if keep.is_finite() && keep > to.distance {
+        to.distance = keep;
+    }
+    to
 }
 
 /// The side to look from at a plane with normal `n`: its own side, or with `again` the other

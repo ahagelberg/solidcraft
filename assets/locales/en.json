@@ -451,6 +451,7 @@
   "cmd.edit_checkpoint": "Checkpoint",
   "cmd.edit_restore_checkpoint": "Restore Checkpoint",
   "cmd.engine_commands": "List Commands",
+  "cmd.engine_describe": "Describe Command",
   "cmd.explode_create": "Exploded View",
   "cmd.explode_delete": "Delete Exploded View",
   "cmd.explode_list": "List Exploded Views",

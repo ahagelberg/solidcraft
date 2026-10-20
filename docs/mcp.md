@@ -47,6 +47,16 @@ A `batch` that could not be sent says the app is not running, so it is safe to s
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 
+### Parameter checking
+
+Commands with a typed parameter contract (`solid.box`, `solid.extrude` and `engine.describe`
+so far; `describe_command` shows a command's schemas) can be checked as they are called.
+`--param-check off|warn|strict` sets the level for a headless session, including a script or
+recipe given with `--in`; the default is `off`, which changes nothing. `warn` runs the call and
+adds `param_warnings` to its result, such as ``unknown key `operaton`; did you mean
+`operation`?`` (a starting script's warnings go to stderr). `strict` refuses the call, and the
+design is left as it was. Calls bridged to the app are not checked yet.
+
 ### Which files the agent can reach
 
 Tool calls read, write and delete files only inside the server's folders:
@@ -99,11 +109,11 @@ file dialogs are never limited.
 ### Tool annotations
 
 Each tool says what it may do, for clients that ask before running tools (or auto-approve on
-these hints). `list_commands`, `inspect_design`, `measure`, `body_topology` and `crash_reports`
-are read-only. `set_parameter`, `undo` and `redo` change the design undoably. `new_design`
-replaces it (destructive). `execute`, `batch`, `open`, `save`, `export` and `screenshot` (whose
-`path` writes a file) can read, write, overwrite or delete files: they are not read-only,
-`destructiveHint` and `openWorldHint` are true.
+these hints). `list_commands`, `describe_command`, `inspect_design`, `measure`, `body_topology`
+and `crash_reports` are read-only. `set_parameter`, `undo` and `redo` change the design undoably.
+`new_design` replaces it (destructive). `execute`, `batch`, `open`, `save`, `export` and
+`screenshot` (whose `path` writes a file) can read, write, overwrite or delete files: they are
+not read-only, `destructiveHint` and `openWorldHint` are true.
 
 ### Client configuration
 
@@ -143,6 +153,7 @@ They cover the workflow, the command shapes, how to verify with `measure`, and t
 | Tool | Arguments | What it does |
 |---|---|---|
 | `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
+| `describe_command` | `id` | One command's parameter docs (`params`) and, for commands with a typed contract (`solid.box`, `solid.extrude` and `engine.describe` so far), the JSON Schemas (2020-12) of its parameters (`input`) and of a successful result (`output`); `null` for the others. The same as `execute` `engine.describe {command}`. |
 | `execute` | `command`, `params?`, `verbose?` (default true) | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. |
 | `batch` | `commands: [{command, params}]`, `rollback?` (default true), `verbose?` (default true), `timings?`, `profile?` (default false) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. Bridged to an app that has `engine.batch`, the whole batch is one control request (one frame of the app). Older apps, and apps showing the agent cursor, get the steps one by one. `timings: true` adds `timings: [{index, command, ms}]` for every step run, the failing one included, and `total_ms`. `profile: true` also adds each step's `profile: {boolean_ms, tessellate_ms, other_ms}`, its time in kernel booleans, in tessellation and the rest. Steps are timed where they run: in the app when bridged. An app without `engine.batch` is timed step by step, without `profile`. |
 | `inspect_design` | `measure?` (default true), `sketches?` (default true) | Design properties (`metadata`: project, author… and other tools' keys; set them with `execute` `document.metadata.set`), parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible; `removed_later: true` while a sketch is being edited on a rolled-back timeline and a later feature deletes the body, which is then not shown), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`), and joint glyphs with `{joints: [id or name], visible}` or `{folder: "joints", visible}` (a hidden joint still constrains and drives; `joint.list` reports each joint's `visible`). |
