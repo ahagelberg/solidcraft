@@ -1128,24 +1128,167 @@ fn points_region(points: &[[f64; 2]]) -> Option<Region2> {
     clean_loop(points).map(|outer| Region2 { outer, holes: Vec::new() })
 }
 
-/// One quad per straight segment of a track (a stroke of `width` along `points`).
-fn track_quads(points: &[[f64; 2]], width: f64) -> Vec<[[f64; 2]; 4]> {
-    let mut out = Vec::new();
-    if points.len() < 2 || !(width.is_finite() && width > 0.0) {
-        return out;
+/// The closed outline of a stroke of `width` along `points`: one polygon for the whole stroke,
+/// with mitered corners (bevelled where a corner is too sharp for a miter). `None` when the
+/// points do not make a stroke.
+fn stroke_outline(points: &[[f64; 2]], width: f64) -> Option<Vec<[f64; 2]>> {
+    if !(width.is_finite() && width > 0.0) {
+        return None;
+    }
+    let mut pts: Vec<[f64; 2]> = Vec::with_capacity(points.len());
+    for &p in points {
+        if !(p[0].is_finite() && p[1].is_finite()) || p[0].abs() > MAX_NUMBER || p[1].abs() > MAX_NUMBER {
+            return None;
+        }
+        if pts.last().is_none_or(|q: &[f64; 2]| (q[0] - p[0]).hypot(q[1] - p[1]) > 1e-9) {
+            pts.push(p);
+        }
+    }
+    if pts.len() < 2 {
+        return None;
     }
     let half = width * 0.5;
-    for pair in points.windows(2) {
-        let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else { continue };
+    // A stroke that comes back to its start is one closed ring: its seam is a corner too.
+    let closed = pts.len() > 2 && pts.first().zip(pts.last()).is_some_and(|(f, l)| (l[0] - f[0]).hypot(l[1] - f[1]) <= 1e-9);
+    if closed {
+        pts.pop();
+    }
+    if pts.len() < 2 || (closed && pts.len() < 3) {
+        return None;
+    }
+    let mut dirs: Vec<[f64; 2]> = Vec::with_capacity(pts.len());
+    let segments = if closed { pts.len() } else { pts.len() - 1 };
+    for i in 0..segments {
+        let (Some(a), Some(b)) = (pts.get(i), pts.get((i + 1) % pts.len())) else { return None };
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
         let len = (dx * dx + dy * dy).sqrt();
-        if !len.is_finite() || len < 1e-9 {
+        if !(len.is_finite() && len > 0.0) {
+            return None;
+        }
+        dirs.push([dx / len, dy / len]);
+    }
+    let normal = |d: [f64; 2]| [-d[1], d[0]];
+    let mut left: Vec<[f64; 2]> = Vec::with_capacity(pts.len() + 4);
+    let mut right: Vec<[f64; 2]> = Vec::with_capacity(pts.len() + 4);
+    for (k, &p) in pts.iter().enumerate() {
+        let incoming = if k == 0 { if closed { dirs.last().copied() } else { None } } else { dirs.get(k - 1).copied() };
+        let outgoing = dirs.get(k).copied();
+        match (incoming, outgoing) {
+            (Some(d), None) | (None, Some(d)) => {
+                let n = normal(d);
+                left.push([p[0] + n[0] * half, p[1] + n[1] * half]);
+                right.push([p[0] - n[0] * half, p[1] - n[1] * half]);
+            }
+            (Some(d0), Some(d1)) => {
+                let (n0, n1) = (normal(d0), normal(d1));
+                let (mx, my) = (n0[0] + n1[0], n0[1] + n1[1]);
+                let miter = (mx * mx + my * my).sqrt();
+                // The miter reaches half/cos(turn/2); past a 157° turn it runs away, so bevel.
+                let cos = if miter > 1e-9 { (mx / miter) * n0[0] + (my / miter) * n0[1] } else { 0.0 };
+                if miter > 1e-9 && cos > 0.2 {
+                    let scale = half / cos;
+                    left.push([p[0] + mx / miter * scale, p[1] + my / miter * scale]);
+                    right.push([p[0] - mx / miter * scale, p[1] - my / miter * scale]);
+                } else {
+                    left.push([p[0] + n0[0] * half, p[1] + n0[1] * half]);
+                    left.push([p[0] + n1[0] * half, p[1] + n1[1] * half]);
+                    right.push([p[0] - n0[0] * half, p[1] - n0[1] * half]);
+                    right.push([p[0] - n1[0] * half, p[1] - n1[1] * half]);
+                }
+            }
+            (None, None) => return None,
+        }
+    }
+    right.reverse();
+    left.extend(right);
+    (left.len() >= 3).then_some(left)
+}
+
+/// Points closer than this (mm) are the same point when tracks are joined.
+const TRACK_JOIN_TOLERANCE: f64 = 1e-6;
+
+/// A track end, rounded to [`TRACK_JOIN_TOLERANCE`] so tracks that meet are found.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct TrackEnd(i64, i64);
+
+fn track_end(p: [f64; 2]) -> TrackEnd {
+    TrackEnd((p[0] / TRACK_JOIN_TOLERANCE).round() as i64, (p[1] / TRACK_JOIN_TOLERANCE).round() as i64)
+}
+
+/// The side and width a trace is on: only tracks that share them join.
+type TraceKey = (bool, u64, TrackEnd);
+
+/// The board's tracks and track arcs as continuous traces: KiCad stores a routed trace as one
+/// `segment` (or `arc`) per leg, so legs that meet end to end on the same layer and width are
+/// joined into one polyline. Points are in the board frame.
+fn track_polylines(tracks: &[KicadStroke]) -> Vec<(bool, f64, Vec<[f64; 2]>)> {
+    let mut ends: HashMap<TraceKey, Vec<usize>> = HashMap::new();
+    for (i, track) in tracks.iter().enumerate() {
+        let (Some(first), Some(last)) = (track.points.first(), track.points.last()) else { continue };
+        let key = (track.layer == "F.Cu", track.width.to_bits());
+        ends.entry((key.0, key.1, track_end(*first))).or_default().push(i);
+        if track_end(*first) != track_end(*last) {
+            ends.entry((key.0, key.1, track_end(*last))).or_default().push(i);
+        }
+    }
+    let mut used = vec![false; tracks.len()];
+    let mut out = Vec::new();
+    for start in 0..tracks.len() {
+        let track = &tracks[start];
+        if used[start] || track.points.len() < 2 {
+            used[start] = true;
             continue;
         }
-        let (nx, ny) = (-dy / len * half, dx / len * half);
-        out.push([[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]]);
+        used[start] = true;
+        let front = track.layer == "F.Cu";
+        let width = track.width.to_bits();
+        let mut chain = track.points.clone();
+        extend_trace(&mut chain, tracks, &ends, &mut used, front, width, true);
+        extend_trace(&mut chain, tracks, &ends, &mut used, front, width, false);
+        if chain.len() >= 2 {
+            out.push((front, track.width, chain.iter().map(|p| [p[0], -p[1]]).collect()));
+        }
     }
     out
+}
+
+/// Follow the tracks that continue `chain` at one of its ends (exactly one unused leg of the
+/// same layer and width, else a junction or a loose end stops the trace).
+fn extend_trace(
+    chain: &mut Vec<[f64; 2]>,
+    tracks: &[KicadStroke],
+    ends: &HashMap<TraceKey, Vec<usize>>,
+    used: &mut [bool],
+    front: bool,
+    width: u64,
+    at_end: bool,
+) {
+    loop {
+        let Some(anchor) = (if at_end { chain.last() } else { chain.first() }).copied() else { return };
+        let Some(candidates) = ends.get(&(front, width, track_end(anchor))) else { return };
+        let mut free = candidates.iter().copied().filter(|i| !used.get(*i).copied().unwrap_or(true));
+        let (Some(next), None) = (free.next(), free.next()) else { return };
+        let Some(points) = tracks.get(next).map(|t| t.points.as_slice()) else { return };
+        let (Some(first), Some(last)) = (points.first().copied(), points.last().copied()) else { return };
+        let mut grow: Vec<[f64; 2]> = Vec::with_capacity(points.len());
+        if track_end(first) == track_end(anchor) {
+            grow.extend(points.iter().skip(1).copied());
+        } else if track_end(last) == track_end(anchor) {
+            grow.extend(points.iter().rev().skip(1).copied());
+        } else {
+            return;
+        }
+        used[next] = true;
+        if at_end {
+            chain.extend(grow);
+        } else {
+            // The leg runs away from the chain's front: its points go in reversed.
+            grow.reverse();
+            let tail = std::mem::take(chain);
+            chain.extend(grow);
+            chain.extend(tail);
+        }
+    }
 }
 
 /// How finely a text outline curve is drawn (mm).
@@ -1389,8 +1532,8 @@ impl Plate {
     }
 
     fn add_track(&mut self, points: &[[f64; 2]], width: f64, z0: f64, z1: f64) {
-        for quad in track_quads(points, width) {
-            self.add_loop(&quad, z0, z1);
+        if let Some(outline) = stroke_outline(points, width) {
+            self.add_loop(&outline, z0, z1);
         }
     }
 
@@ -1429,12 +1572,11 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
         items += 1;
         f(plate);
     };
-    for track in &board.tracks {
-        let points: Vec<[f64; 2]> = track.points.iter().map(|p| [p[0], -p[1]]).collect();
-        let front_side = track.layer == "F.Cu";
+    // A routed trace is one item, however many legs KiCad stores it in.
+    for (front_side, width, points) in track_polylines(&board.tracks) {
         let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
         let plate = if front_side { &mut front } else { &mut back };
-        add(plate, &|p| p.add_track(&points, track.width, z0, z1));
+        add(plate, &|p| p.add_track(&points, width, z0, z1));
     }
     for via in &board.vias {
         let center = [via.at[0], -via.at[1]];
@@ -1577,10 +1719,14 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         items += 1;
         target.append(&mut regions);
     };
-    for track in &board.tracks {
-        let points: Vec<[f64; 2]> = track.points.iter().map(|p| [p[0], -p[1]]).collect();
-        let regions: Vec<Region2> = track_quads(&points, track.width).iter().filter_map(|q| points_region(q)).collect();
-        push(if track.layer == "F.Cu" { &mut front } else { &mut back }, regions);
+    // A routed trace is one item, however many legs KiCad stores it in.
+    for (front_side, width, points) in track_polylines(&board.tracks) {
+        let regions: Vec<Region2> = stroke_outline(&points, width).and_then(|outline| points_region(&outline)).into_iter().collect();
+        if front_side {
+            push(&mut front, regions);
+        } else {
+            push(&mut back, regions);
+        }
     }
     for via in &board.vias {
         let center = [via.at[0], -via.at[1]];
@@ -1646,7 +1792,7 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         let regions: Vec<Region2> = if graphic.filled && points.len() >= 3 {
             points_region(&points).into_iter().collect()
         } else {
-            track_quads(&points, graphic.width).iter().filter_map(|q| points_region(q)).collect()
+            stroke_outline(&points, graphic.width).and_then(|outline| points_region(&outline)).into_iter().collect()
         };
         push(if layer == "F.Cu" { &mut front } else { &mut back }, regions);
     }

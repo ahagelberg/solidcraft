@@ -321,6 +321,77 @@ fn copper_overlay_is_a_flat_face_on_the_board() {
 }
 
 #[test]
+fn a_stroke_is_one_outline_with_mitered_corners() {
+    let outline = stroke_outline(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0).expect("a stroke outline");
+    let has = |x: f64, y: f64| outline.iter().any(|p| (p[0] - x).abs() < 1e-9 && (p[1] - y).abs() < 1e-9);
+    // The corner reaches its full width on both sides: no notch between the two legs.
+    assert!(has(11.0, -1.0), "{outline:?}");
+    assert!(has(9.0, 1.0), "{outline:?}");
+    assert!(has(0.0, 1.0) && has(0.0, -1.0), "{outline:?}");
+    // One closed contour, not two rectangles.
+    assert_eq!(outline.len(), 6, "{outline:?}");
+
+    // A trace that comes back to its start is a ring, mitred at the seam as well.
+    let ring = stroke_outline(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]], 2.0).expect("a ring outline");
+    let has = |x: f64, y: f64| ring.iter().any(|p| (p[0] - x).abs() < 1e-9 && (p[1] - y).abs() < 1e-9);
+    assert!(has(11.0, 11.0) && has(-1.0, -1.0) && has(9.0, 9.0) && has(1.0, 1.0), "{ring:?}");
+    assert_eq!(ring.len(), 8, "{ring:?}");
+}
+
+#[test]
+fn track_legs_that_continue_each_other_are_one_trace() {
+    let track = |a: [f64; 2], b: [f64; 2], width: f64, layer: &str| KicadStroke {
+        layer: layer.to_string(),
+        points: vec![a, b],
+        closed: false,
+        filled: true,
+        width,
+    };
+    let traces = track_polylines(&[
+        track([0.0, 0.0], [10.0, 0.0], 0.25, "F.Cu"),
+        track([10.0, 0.0], [10.0, 10.0], 0.25, "F.Cu"),
+        track([10.0, 10.0], [20.0, 10.0], 0.25, "F.Cu"),
+    ]);
+    assert_eq!(traces.len(), 1, "{traces:?}");
+    let (front, width, points) = &traces[0];
+    assert!(*front);
+    assert!((*width - 0.25).abs() < 1e-12);
+    // Board frame: KiCad's Y is negated, and the legs are one 4-point polyline.
+    assert_eq!(points, &[[0.0, 0.0], [10.0, 0.0], [10.0, -10.0], [20.0, -10.0]]);
+
+    // A leg of another width is a trace of its own; the two same-width legs through the junction
+    // still continue each other (they are one net), so there are two traces, not three.
+    let separate = track_polylines(&[
+        track([0.0, 0.0], [10.0, 0.0], 0.25, "F.Cu"),
+        track([10.0, 0.0], [20.0, 0.0], 0.5, "F.Cu"),
+        track([10.0, 0.0], [10.0, 10.0], 0.25, "F.Cu"),
+    ]);
+    assert_eq!(separate.len(), 2, "{separate:?}");
+    assert!(separate.iter().any(|(_, width, points)| (*width - 0.5).abs() < 1e-12 && points.len() == 2), "{separate:?}");
+    assert!(separate.iter().any(|(_, width, points)| (*width - 0.25).abs() < 1e-12 && points.len() == 3), "{separate:?}");
+}
+
+#[test]
+fn b_rep_copper_joins_track_legs_into_one_solid() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (segment (start 1 2) (end 6 2) (width 0.4) (layer "F.Cu") (net 1))
+      (segment (start 6 2) (end 6 7) (width 0.4) (layer "F.Cu") (net 1))
+      (segment (start 6 7) (end 14 7) (width 0.4) (layer "F.Cu") (net 1)))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "trace.kicad_pcb", &options, &mut load).unwrap();
+    let copper = imported.copper.expect("B-rep copper");
+    assert_eq!(copper.items, 1, "the three legs are one trace");
+    let imp = solidcraft_kernel::step_import_shared(&copper.step).expect("STEP");
+    assert_eq!(imp.bodies.len(), 1, "{:?}", imp.bodies.iter().map(|b| &b.name).collect::<Vec<_>>());
+    // The corner is filled to its full width: 0.4 mm legs reach 5.8/6.2 and 6.8/7.2.
+    let measure = solidcraft_kernel::measure(&imp.bodies[0].body).expect("bounds");
+    assert!((measure.bbox.min.y + 7.2).abs() < 1e-6 && (measure.bbox.max.y + 1.8).abs() < 1e-6, "{measure:?}");
+    assert!((measure.bbox.min.x - 1.0).abs() < 1e-6 && (measure.bbox.max.x - 14.0).abs() < 1e-6, "{measure:?}");
+}
+
+#[test]
 fn b_rep_copper_is_solids_with_the_copper_thickness() {
     let source = r#"(kicad_pcb (general (thickness 1.6))
       (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
