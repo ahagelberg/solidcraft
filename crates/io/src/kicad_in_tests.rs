@@ -321,6 +321,68 @@ fn copper_overlay_is_a_flat_face_on_the_board() {
 }
 
 #[test]
+fn trace_into_a_via_stops_at_its_drill() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (via (at 10 5) (size 1.2) (drill 0.6) (layers "F.Cu" "B.Cu") (net 1))
+      (segment (start 10 5) (end 16 5) (width 0.4) (layer "F.Cu") (net 1)))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "via.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    let front = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("front copper");
+    let area = solidcraft_kernel::measure(&front.body).expect("bounds").volume / 0.035;
+    // The via's ring plus the trace from 10.5 (its 0.3 drill plus half the 0.4 stroke) to 16:
+    // nothing over the hole, not even the stroke's corner.
+    let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3) + 5.5 * 0.4;
+    assert!((area - expected).abs() < 0.03, "{area} vs {expected}");
+}
+
+#[test]
+fn a_trace_crossing_a_hole_is_cut_at_the_hole() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (via (at 10 5) (size 1.2) (drill 0.6) (layers "F.Cu" "B.Cu") (net 1))
+      (segment (start 6 5) (end 14 5) (width 0.4) (layer "F.Cu") (net 1)))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "via.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    let front = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("front copper");
+    let area = solidcraft_kernel::measure(&front.body).expect("bounds").volume / 0.035;
+    // The ring plus the trace on either side of the hole (6 → 9.5 and 10.5 → 14).
+    let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3) + 2.0 * 3.5 * 0.4;
+    assert!((area - expected).abs() < 0.03, "{area} vs {expected}");
+}
+
+#[test]
+fn traces_stop_at_drilled_holes() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (segment (start 2 5) (end 18 5) (width 0.4) (layer "F.Cu") (net 1))
+      (footprint "test:TH" (layer "F.Cu") (at 10 5)
+        (pad "1" thru_hole circle (at 0 0) (size 3 3) (drill 1.2) (layers "F.Cu" "B.Cu"))))"#;
+    // Only the trace's copper: the pad's own ring is not built.
+    let options = KicadOptions { copper: KicadCopper::Mesh, pads: false, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "trace.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    let copper = meshes.iter().find(|m| m.name == "Copper F.Cu").expect("front copper");
+    let positions: Vec<Vec3> = copper.positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect();
+    let triangles: Vec<[u32; 3]> = copper.triangles.as_chunks::<3>().0.to_vec();
+    let body = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
+    let area = solidcraft_kernel::measure(&body).unwrap().volume / 0.035;
+    // 16 mm of trace, 1.6 mm of it left open: the 1.2 mm drill plus the stroke's own width.
+    assert!((area - 14.4 * 0.4).abs() < 0.05, "{area}");
+
+    // The B-rep copper is trimmed the same way, as two pieces.
+    let options = KicadOptions { copper: KicadCopper::Brep, pads: false, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "trace.kicad_pcb", &options, &mut load).unwrap();
+    assert_eq!(imported.copper.expect("B-rep copper").items, 2);
+}
+
+#[test]
 fn closed_silk_shapes_are_drawn_all_the_way_round() {
     let source = r#"(kicad_pcb (general (thickness 1.6))
       (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))

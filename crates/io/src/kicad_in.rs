@@ -457,7 +457,7 @@ pub fn parse_kicad_board_with(bytes: &[u8], file: &str, options: KicadOptions) -
         }
     }
     for via in &board.vias {
-        board.drills.push(KicadDrill { center: via.at, size: [via.drill.abs(), via.drill.abs()] });
+        board.drills.push(KicadDrill { center: [via.at[0], -via.at[1]], size: [via.drill.abs(), via.drill.abs()] });
     }
     if extra_text_seen {
         board.warnings.push("text boxes, dimensions and tables are not modeled yet".into());
@@ -1597,6 +1597,141 @@ impl Plate {
     }
 }
 
+/// Every drilled hole of the board as a convex outline in the board frame: no copper may cover
+/// one, whichever side it is on (a drill goes through the board).
+fn drill_outlines(board: &KicadBoard) -> Vec<Vec<[f64; 2]>> {
+    let mut out = Vec::new();
+    for via in &board.vias {
+        let center = [via.at[0], -via.at[1]];
+        let points = circle_points(center, (via.drill * 0.5).abs());
+        if points.len() >= 3 {
+            out.push(points);
+        }
+    }
+    for footprint in &board.footprints {
+        let transform = footprint_world(footprint);
+        for pad in &footprint.pads {
+            let Some(points) = pad_drill_points(pad) else { continue };
+            let moved: Vec<[f64; 2]> = points.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
+            if moved.len() >= 3 {
+                out.push(moved);
+            }
+        }
+    }
+    out
+}
+
+/// The part of a segment `a`→`b` inside a convex outline, as a range of `t` along it.
+fn inside_span(a: [f64; 2], b: [f64; 2], outline: &[[f64; 2]]) -> Option<(f64, f64)> {
+    if outline.len() < 3 {
+        return None;
+    }
+    let mut twice_area = 0.0;
+    for i in 0..outline.len() {
+        let p = outline[i];
+        let q = outline[(i + 1) % outline.len()];
+        twice_area += p[0] * q[1] - q[0] * p[1];
+    }
+    if !twice_area.is_finite() || twice_area.abs() < 1e-12 {
+        return None;
+    }
+    let sign = if twice_area > 0.0 { 1.0 } else { -1.0 };
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let (mut t0, mut t1) = (0.0, 1.0);
+    for i in 0..outline.len() {
+        let p = outline[i];
+        let q = outline[(i + 1) % outline.len()];
+        let e = [q[0] - p[0], q[1] - p[1]];
+        let rel = [a[0] - p[0], a[1] - p[1]];
+        // Inside is sign·(e × (a + t·d − p)) ≥ 0.
+        let num = sign * (e[0] * rel[1] - e[1] * rel[0]);
+        let denom = sign * (e[0] * d[1] - e[1] * d[0]);
+        if denom.abs() < 1e-12 {
+            if num < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let t = -num / denom;
+        if denom > 0.0 {
+            if t > t0 {
+                t0 = t;
+            }
+        } else if t < t1 {
+            t1 = t;
+        }
+        if t0 > t1 {
+            return None;
+        }
+    }
+    (t1 - t0 > 1e-9).then_some((t0, t1))
+}
+
+/// A convex drill outline grown by `margin` all round: radially from its own centre, which is
+/// exact for a round drill and close enough for a slot.
+fn grow_outline(outline: &[[f64; 2]], margin: f64) -> Vec<[f64; 2]> {
+    if !(margin > 0.0) || outline.len() < 3 {
+        return outline.to_vec();
+    }
+    let count = outline.len() as f64;
+    let cx = outline.iter().map(|p| p[0]).sum::<f64>() / count;
+    let cy = outline.iter().map(|p| p[1]).sum::<f64>() / count;
+    outline
+        .iter()
+        .map(|p| {
+            let (dx, dy) = (p[0] - cx, p[1] - cy);
+            let d = (dx * dx + dy * dy).sqrt();
+            if d < 1e-12 { *p } else { [p[0] + dx / d * margin, p[1] + dy / d * margin] }
+        })
+        .collect()
+}
+
+/// The runs of a polyline that no drilled hole covers: copper stops at a hole, and a trace that
+/// runs into one comes back as the pieces on either side of it. Each hole is grown by half the
+/// stroke's width, so the stroke's own corners never reach into it.
+fn trim_around_drills(points: &[[f64; 2]], width: f64, drills: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
+    let half = if width.is_finite() && width > 0.0 { width * 0.5 } else { 0.0 };
+    let grown: Vec<Vec<[f64; 2]>> = drills.iter().map(|outline| grow_outline(outline, half)).collect();
+    let at = |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    let mut pieces: Vec<([f64; 2], [f64; 2])> = Vec::new();
+    for pair in points.windows(2) {
+        let (Some(a), Some(b)) = (pair.first().copied(), pair.get(1).copied()) else { continue };
+        let mut spans: Vec<(f64, f64)> = grown.iter().filter_map(|outline| inside_span(a, b, outline)).collect();
+        spans.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut t = 0.0;
+        for (s0, s1) in spans {
+            let (s0, s1) = (s0.max(0.0), s1.min(1.0));
+            if s1 <= t {
+                continue;
+            }
+            if s0 > t {
+                pieces.push((at(a, b, t), at(a, b, s0)));
+            }
+            t = t.max(s1);
+            if t >= 1.0 {
+                break;
+            }
+        }
+        if t < 1.0 {
+            pieces.push((at(a, b, t), b));
+        }
+    }
+    let mut runs: Vec<Vec<[f64; 2]>> = Vec::new();
+    for (p, q) in pieces {
+        if (q[0] - p[0]).hypot(q[1] - p[1]) <= 1e-12 {
+            continue;
+        }
+        if let Some(run) = runs.last_mut()
+            && run.last().is_some_and(|last| (last[0] - p[0]).hypot(last[1] - p[1]) <= 1e-9)
+        {
+            run.push(q);
+            continue;
+        }
+        runs.push(vec![p, q]);
+    }
+    runs
+}
+
 /// Front and back copper plates: tracks, vias, pads and zones, modelled with their thickness or
 /// as a thin film overlaid on the board's surfaces.
 fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopper, warnings: &mut Vec<String>) -> Vec<(Plate, &'static str)> {
@@ -1619,11 +1754,14 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
         items += 1;
         f(plate);
     };
-    // A routed trace is one item, however many legs KiCad stores it in.
+    // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill.
+    let drills = drill_outlines(board);
     for (front_side, width, points) in track_polylines(&board.tracks) {
         let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
         let plate = if front_side { &mut front } else { &mut back };
-        add(plate, &|p| p.add_track(&points, width, false, z0, z1));
+        for run in trim_around_drills(&points, width, &drills) {
+            add(plate, &|p| p.add_track(&run, width, false, z0, z1));
+        }
     }
     for via in &board.vias {
         let center = [via.at[0], -via.at[1]];
@@ -1769,13 +1907,16 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         items += 1;
         target.append(&mut regions);
     };
-    // A routed trace is one item, however many legs KiCad stores it in.
+    // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill.
+    let drills = drill_outlines(board);
     for (front_side, width, points) in track_polylines(&board.tracks) {
-        let regions: Vec<Region2> = stroke_region(&points, width, false).into_iter().collect();
-        if front_side {
-            push(&mut front, regions);
-        } else {
-            push(&mut back, regions);
+        for run in trim_around_drills(&points, width, &drills) {
+            let regions: Vec<Region2> = stroke_region(&run, width, false).into_iter().collect();
+            if front_side {
+                push(&mut front, regions);
+            } else {
+                push(&mut back, regions);
+            }
         }
     }
     for via in &board.vias {
