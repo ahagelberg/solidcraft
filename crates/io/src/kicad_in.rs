@@ -1783,17 +1783,53 @@ fn grow_outline(outline: &[[f64; 2]], margin: f64) -> Vec<[f64; 2]> {
         .collect()
 }
 
-/// The runs of a polyline that no drilled hole covers: copper stops at a hole, and a trace that
-/// runs into one comes back as the pieces on either side of it. Each hole is grown by half the
-/// stroke's width, so the stroke's own corners never reach into it.
-fn trim_around_drills(points: &[[f64; 2]], width: f64, drills: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
+/// The copper of every pad, per side, in the board frame: a trace stops where a pad's copper
+/// begins, so the two never share a face (they are drawn in different colours: under the mask,
+/// and bare metal).
+fn pad_outlines(board: &KicadBoard) -> (Vec<Vec<[f64; 2]>>, Vec<Vec<[f64; 2]>>) {
+    let mut front = Vec::new();
+    let mut back = Vec::new();
+    for footprint in &board.footprints {
+        let transform = footprint_world(footprint);
+        for pad in &footprint.pads {
+            let on_front = pad.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
+            let on_back = pad.layers.iter().any(|l| l == "B.Cu" || l == "*.Cu" || l == "F&B.Cu");
+            if !on_front && !on_back {
+                continue;
+            }
+            for loop_ in pad_loops(pad) {
+                let moved: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
+                if moved.len() < 3 {
+                    continue;
+                }
+                if on_front {
+                    front.push(moved.clone());
+                }
+                if on_back {
+                    back.push(moved);
+                }
+            }
+        }
+    }
+    (front, back)
+}
+
+/// The runs of a polyline that no drilled hole (or pad) covers: copper stops at a hole, and a
+/// trace that runs into one comes back as the pieces on either side of it. A hole is grown by
+/// half the stroke's width, so the stroke's own corners never reach into it; a pad is not, since
+/// the pad's own copper carries on from its edge.
+fn trim_around_drills(points: &[[f64; 2]], width: f64, drills: &[Vec<[f64; 2]>], pads: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
     let half = if width.is_finite() && width > 0.0 { width * 0.5 } else { 0.0 };
-    let grown: Vec<Vec<[f64; 2]>> = drills.iter().map(|outline| grow_outline(outline, half)).collect();
     let at = |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
     let mut pieces: Vec<([f64; 2], [f64; 2])> = Vec::new();
     for pair in points.windows(2) {
         let (Some(a), Some(b)) = (pair.first().copied(), pair.get(1).copied()) else { continue };
-        let mut spans: Vec<(f64, f64)> = grown.iter().filter_map(|outline| inside_span(a, b, outline)).collect();
+        let mut spans: Vec<(f64, f64)> = drills
+            .iter()
+            .map(|outline| grow_outline(outline, half))
+            .chain(pads.iter().cloned())
+            .filter_map(|outline| inside_span(a, b, &outline))
+            .collect();
         spans.sort_by(|x, y| x.0.total_cmp(&y.0));
         let mut t = 0.0;
         for (s0, s1) in spans {
@@ -1854,12 +1890,15 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
         items += 1;
         f(plate);
     };
-    // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill.
+    // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill,
+    // and at every pad, whose own copper (bare metal) takes over from its edge.
     let drills = drill_outlines(board);
+    let (pad_front, pad_back) = if pads { pad_outlines(board) } else { (Vec::new(), Vec::new()) };
     for (front_side, width, points) in track_polylines(&board.tracks) {
         let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
         let plate = if front_side { &mut front } else { &mut back };
-        for run in trim_around_drills(&points, width, &drills) {
+        let pads = if front_side { &pad_front } else { &pad_back };
+        for run in trim_around_drills(&points, width, &drills, pads) {
             add(plate, &|p| p.add_track(&run, width, false, z0, z1));
         }
     }
@@ -2034,10 +2073,13 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         items += 1;
         target.append(&mut regions);
     };
-    // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill.
+    // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill,
+    // and at every pad, whose own copper (bare metal) takes over from its edge.
     let drills = drill_outlines(board);
+    let (pad_front, pad_back) = if pads { pad_outlines(board) } else { (Vec::new(), Vec::new()) };
     for (front_side, width, points) in track_polylines(&board.tracks) {
-        for run in trim_around_drills(&points, width, &drills) {
+        let pads = if front_side { &pad_front } else { &pad_back };
+        for run in trim_around_drills(&points, width, &drills, pads) {
             let regions: Vec<Region2> = stroke_region(&run, width, false).into_iter().collect();
             if front_side {
                 push(&mut front, regions);

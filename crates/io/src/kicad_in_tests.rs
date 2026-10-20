@@ -609,3 +609,28 @@ fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
     let trace = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("the trace's body");
     assert_eq!(trace.color, Some(masked));
 }
+
+/// A trace that runs into a pad stops at its edge: the pad's own copper (bare metal) carries on,
+/// so the masked trace and the open pad never share a face in different colours.
+#[test]
+fn a_trace_stops_where_a_pads_copper_begins() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (segment (start 2 5) (end 12 5) (width 0.4) (layer "F.Cu") (net 1))
+      (footprint "test:SMD" (layer "F.Cu") (at 12 5)
+        (property "Reference" "R1")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu" "F.Mask"))))"#;
+    let options = KicadOptions { copper: KicadCopper::Mesh, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "joint.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    let extent = |name: &str| {
+        let mesh = meshes.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} is missing"));
+        let xs: Vec<f64> = mesh.positions.as_chunks::<3>().0.iter().map(|p| p[0]).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let (_, trace_max) = extent("Copper F.Cu");
+    assert!((trace_max - 11.0).abs() < 1e-6, "the trace ends at the pad's edge: {trace_max}");
+    let (pad_min, pad_max) = extent("Copper F.Cu pads");
+    assert!((pad_min - 11.0).abs() < 1e-6 && (pad_max - 13.0).abs() < 1e-6, "{pad_min}..{pad_max}");
+}
