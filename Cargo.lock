@@ -4806,7 +4806,7 @@ dependencies = [
  "array-macro",
  "derive_more",
  "itertools 0.13.0",
-]
+ "rayon",
  "rustc-hash 2.1.3",
  "spade",
  "truck-base",
@@ -4816,7 +4816,7 @@ dependencies = [
  "truck-topology",
 ]
 
-]
+[[package]]
 name = "truck-modeling"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
