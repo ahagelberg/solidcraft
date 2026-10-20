@@ -304,11 +304,24 @@ fn a_row_renames_and_deletes_its_design() {
         { "until": { "count": { "name": "designs:designs", "value": 2 } } },
         { "click": { "handle": "designs:row:dish" }, "button": "right" },
         { "widget": "Delete" },
-        { "click": { "handle": "designs:confirm:delete" } },
+        { "key": "Enter" },
         { "until": { "count": { "name": "designs:designs", "value": 1 } } }
     ]))
     .unwrap();
     assert!(!h.dir.join("dish.solidcraft").exists(), "delete left {:?}", listing(&h));
+
+    h.run(&json!([
+        { "widget": "New Folder" },
+        { "text": "empty" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } },
+        { "click": { "handle": "designs:row:empty" }, "button": "right" },
+        { "widget": "Delete" },
+        { "key": "Space" },
+        { "until": { "count": { "name": "designs:folders", "value": 0 } } }
+    ]))
+    .unwrap();
+    assert!(!h.dir.join("empty").exists(), "Space did not activate the focused Delete button");
 }
 
 #[test]

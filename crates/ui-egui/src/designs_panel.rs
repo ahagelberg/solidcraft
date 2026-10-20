@@ -84,6 +84,7 @@ struct Confirm {
     path: String,
     name: String,
     folder: bool,
+    focus_delete: bool,
 }
 
 #[derive(Clone)]
@@ -1016,7 +1017,7 @@ fn apply(app: &mut SolveApp, action: Action) {
                 }
             });
         }
-        Action::Delete { path, name, folder } => app.designs.confirm = Some(Confirm { path, name, folder }),
+        Action::Delete { path, name, folder } => app.designs.confirm = Some(Confirm { path, name, folder, focus_delete: true }),
         Action::Properties { path, name } => {
             let description = app
                 .session
@@ -1048,6 +1049,9 @@ fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let delete = ui.button(crate::i18n::tr("designs.delete"));
+                if confirm.focus_delete {
+                    delete.request_focus();
+                }
                 crate::scenario::publish_handle("designs:confirm:delete", delete.rect.center());
                 if delete.clicked() {
                     answer = Some(true);
@@ -1059,6 +1063,9 @@ fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
                 }
             });
         });
+    if let Some(confirm) = app.designs.confirm.as_mut() {
+        confirm.focus_delete = false;
+    }
     if let Some(accept) = answer {
         app.designs.confirm = None;
         if accept {
