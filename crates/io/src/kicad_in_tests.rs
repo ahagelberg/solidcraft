@@ -321,8 +321,62 @@ fn copper_overlay_is_a_flat_face_on_the_board() {
 }
 
 #[test]
+fn closed_silk_shapes_are_drawn_all_the_way_round() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (gr_rect (start 5 5) (end 15 10) (layer "F.SilkS") (width 0.2) (fill none)))"#;
+    let options = KicadOptions { copper: KicadCopper::None, components: false, silkscreen: true, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "silk.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    let silk = meshes.iter().find(|m| m.name == "Silkscreen F.SilkS").expect("front silk");
+    let positions: Vec<Vec3> = silk.positions.as_chunks::<3>().0.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect();
+    let triangles: Vec<[u32; 3]> = silk.triangles.as_chunks::<3>().0.to_vec();
+    let body = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
+    let volume = solidcraft_kernel::measure(&body).unwrap().volume;
+    // A 10 × 5 mm rectangle: perimeter 30 mm × 0.2 mm wide × 0.01 mm thick, every side drawn.
+    assert!((volume - 0.06).abs() < 1e-6, "{volume}");
+}
+
+#[test]
+fn via_copper_is_a_ring_around_its_drill() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (via (at 10 5) (size 1.2) (drill 0.6) (layers "F.Cu" "B.Cu") (net 1)))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "via.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    assert_eq!(imp.bodies.len(), 2, "a via has copper on both sides");
+    let area = solidcraft_kernel::measure(&imp.bodies[0].body).expect("bounds").volume / 0.035;
+    // Copper where the copper is: a 1.2 mm ring around a 0.6 mm drill.
+    let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3);
+    assert!((area - expected).abs() < 0.01, "{area} vs {expected}");
+}
+
+#[test]
+fn through_hole_pad_copper_has_the_drill_through_it() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (footprint "test:TH" (layer "F.Cu") (at 10 5)
+        (property "Reference" "J1")
+        (pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "F.Cu" "B.Cu"))))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "pad.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    assert_eq!(imp.bodies.len(), 2, "a through-hole pad has copper on both sides");
+    let area = solidcraft_kernel::measure(&imp.bodies[0].body).expect("bounds").volume / 0.035;
+    // A 2 mm pad with its 1 mm drill open.
+    let expected = std::f64::consts::PI * (1.0 - 0.25);
+    assert!((area - expected).abs() < 0.02, "{area} vs {expected}");
+}
+
+#[test]
 fn a_stroke_is_one_outline_with_mitered_corners() {
-    let outline = stroke_outline(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0).expect("a stroke outline");
+    let region = stroke_region(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], 2.0, false).expect("a stroke outline");
+    assert!(region.holes.is_empty());
+    let outline: Vec<[f64; 2]> = region.outer.polyline(1e-3).to_vec().into_iter().map(|p| [p.x, p.y]).collect();
     let has = |x: f64, y: f64| outline.iter().any(|p| (p[0] - x).abs() < 1e-9 && (p[1] - y).abs() < 1e-9);
     // The corner reaches its full width on both sides: no notch between the two legs.
     assert!(has(11.0, -1.0), "{outline:?}");
@@ -332,10 +386,14 @@ fn a_stroke_is_one_outline_with_mitered_corners() {
     assert_eq!(outline.len(), 6, "{outline:?}");
 
     // A trace that comes back to its start is a ring, mitred at the seam as well.
-    let ring = stroke_outline(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]], 2.0).expect("a ring outline");
-    let has = |x: f64, y: f64| ring.iter().any(|p| (p[0] - x).abs() < 1e-9 && (p[1] - y).abs() < 1e-9);
-    assert!(has(11.0, 11.0) && has(-1.0, -1.0) && has(9.0, 9.0) && has(1.0, 1.0), "{ring:?}");
-    assert_eq!(ring.len(), 8, "{ring:?}");
+    let ring = stroke_region(&[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]], 2.0, true).expect("a ring outline");
+    assert_eq!(ring.holes.len(), 1, "the inside of the ring is a hole");
+    let outer: Vec<[f64; 2]> = ring.outer.polyline(1e-3).to_vec().into_iter().map(|p| [p.x, p.y]).collect();
+    let inner: Vec<[f64; 2]> = ring.holes[0].polyline(1e-3).to_vec().into_iter().map(|p| [p.x, p.y]).collect();
+    let has = |pts: &[[f64; 2]], x: f64, y: f64| pts.iter().any(|p| (p[0] - x).abs() < 1e-9 && (p[1] - y).abs() < 1e-9);
+    assert!(has(&outer, 11.0, 11.0) && has(&outer, -1.0, -1.0), "{outer:?}");
+    assert!(has(&inner, 9.0, 9.0) && has(&inner, 1.0, 1.0), "{inner:?}");
+    assert_eq!((outer.len(), inner.len()), (4, 4), "{outer:?} {inner:?}");
 }
 
 #[test]

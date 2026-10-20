@@ -1128,10 +1128,11 @@ fn points_region(points: &[[f64; 2]]) -> Option<Region2> {
     clean_loop(points).map(|outer| Region2 { outer, holes: Vec::new() })
 }
 
-/// The closed outline of a stroke of `width` along `points`: one polygon for the whole stroke,
-/// with mitered corners (bevelled where a corner is too sharp for a miter). `None` when the
-/// points do not make a stroke.
-fn stroke_outline(points: &[[f64; 2]], width: f64) -> Option<Vec<[f64; 2]>> {
+/// What a stroke of `width` along `points` fills: its outline as one region, with mitered corners
+/// (bevelled where a corner is too sharp for a miter). A `closed` stroke is a ring — the region
+/// inside its outer edge with the region inside its inner edge as a hole. `None` when the points
+/// do not make a stroke.
+fn stroke_region(points: &[[f64; 2]], width: f64, closed: bool) -> Option<Region2> {
     if !(width.is_finite() && width > 0.0) {
         return None;
     }
@@ -1149,8 +1150,9 @@ fn stroke_outline(points: &[[f64; 2]], width: f64) -> Option<Vec<[f64; 2]>> {
     }
     let half = width * 0.5;
     // A stroke that comes back to its start is one closed ring: its seam is a corner too.
-    let closed = pts.len() > 2 && pts.first().zip(pts.last()).is_some_and(|(f, l)| (l[0] - f[0]).hypot(l[1] - f[1]) <= 1e-9);
-    if closed {
+    let repeats = pts.len() > 2 && pts.first().zip(pts.last()).is_some_and(|(f, l)| (l[0] - f[0]).hypot(l[1] - f[1]) <= 1e-9);
+    let closed = closed || repeats;
+    if repeats {
         pts.pop();
     }
     if pts.len() < 2 || (closed && pts.len() < 3) {
@@ -1168,16 +1170,16 @@ fn stroke_outline(points: &[[f64; 2]], width: f64) -> Option<Vec<[f64; 2]>> {
         dirs.push([dx / len, dy / len]);
     }
     let normal = |d: [f64; 2]| [-d[1], d[0]];
-    let mut left: Vec<[f64; 2]> = Vec::with_capacity(pts.len() + 4);
-    let mut right: Vec<[f64; 2]> = Vec::with_capacity(pts.len() + 4);
+    let mut left: Vec<Vec2> = Vec::with_capacity(pts.len() + 4);
+    let mut right: Vec<Vec2> = Vec::with_capacity(pts.len() + 4);
     for (k, &p) in pts.iter().enumerate() {
         let incoming = if k == 0 { if closed { dirs.last().copied() } else { None } } else { dirs.get(k - 1).copied() };
         let outgoing = dirs.get(k).copied();
         match (incoming, outgoing) {
             (Some(d), None) | (None, Some(d)) => {
                 let n = normal(d);
-                left.push([p[0] + n[0] * half, p[1] + n[1] * half]);
-                right.push([p[0] - n[0] * half, p[1] - n[1] * half]);
+                left.push(Vec2::new(p[0] + n[0] * half, p[1] + n[1] * half));
+                right.push(Vec2::new(p[0] - n[0] * half, p[1] - n[1] * half));
             }
             (Some(d0), Some(d1)) => {
                 let (n0, n1) = (normal(d0), normal(d1));
@@ -1187,21 +1189,29 @@ fn stroke_outline(points: &[[f64; 2]], width: f64) -> Option<Vec<[f64; 2]>> {
                 let cos = if miter > 1e-9 { (mx / miter) * n0[0] + (my / miter) * n0[1] } else { 0.0 };
                 if miter > 1e-9 && cos > 0.2 {
                     let scale = half / cos;
-                    left.push([p[0] + mx / miter * scale, p[1] + my / miter * scale]);
-                    right.push([p[0] - mx / miter * scale, p[1] - my / miter * scale]);
+                    left.push(Vec2::new(p[0] + mx / miter * scale, p[1] + my / miter * scale));
+                    right.push(Vec2::new(p[0] - mx / miter * scale, p[1] - my / miter * scale));
                 } else {
-                    left.push([p[0] + n0[0] * half, p[1] + n0[1] * half]);
-                    left.push([p[0] + n1[0] * half, p[1] + n1[1] * half]);
-                    right.push([p[0] - n0[0] * half, p[1] - n0[1] * half]);
-                    right.push([p[0] - n1[0] * half, p[1] - n1[1] * half]);
+                    left.push(Vec2::new(p[0] + n0[0] * half, p[1] + n0[1] * half));
+                    left.push(Vec2::new(p[0] + n1[0] * half, p[1] + n1[1] * half));
+                    right.push(Vec2::new(p[0] - n0[0] * half, p[1] - n0[1] * half));
+                    right.push(Vec2::new(p[0] - n1[0] * half, p[1] - n1[1] * half));
                 }
             }
             (None, None) => return None,
         }
     }
+    if closed {
+        // The outer edge with the inner edge as its hole: no seam to leave a gap at.
+        let inner = Loop2::polygon(&left);
+        if inner.signed_area().abs() < 1e-9 {
+            return None;
+        }
+        return Some(Region2 { outer: Loop2::polygon(&right), holes: vec![inner] });
+    }
     right.reverse();
     left.extend(right);
-    (left.len() >= 3).then_some(left)
+    (left.len() >= 3).then(|| Region2 { outer: Loop2::polygon(&left), holes: Vec::new() })
 }
 
 /// Points closer than this (mm) are the same point when tracks are joined.
@@ -1531,10 +1541,20 @@ impl Plate {
         }
     }
 
-    fn add_track(&mut self, points: &[[f64; 2]], width: f64, z0: f64, z1: f64) {
-        if let Some(outline) = stroke_outline(points, width) {
-            self.add_loop(&outline, z0, z1);
+    fn add_track(&mut self, points: &[[f64; 2]], width: f64, closed: bool, z0: f64, z1: f64) {
+        if let Some(region) = stroke_region(points, width, closed) {
+            self.add_shape(&region, z0, z1);
         }
+    }
+
+    /// A stroke's shape: a filled outline, or a ring with its hole.
+    fn add_shape(&mut self, region: &Region2, z0: f64, z1: f64) {
+        if !region.holes.is_empty() {
+            self.add_region(region, z0, z1);
+            return;
+        }
+        let points: Vec<[f64; 2]> = region.outer.polyline(1e-3).to_vec().into_iter().map(|p| [p.x, p.y]).collect();
+        self.add_loop(&points, z0, z1);
     }
 
     fn add_circle(&mut self, center: [f64; 2], radius: f64, z0: f64, z1: f64) {
@@ -1543,6 +1563,33 @@ impl Plate {
         }
         let points = circle_points(center, radius);
         self.add_loop(&points, z0, z1);
+    }
+
+    /// A disc of copper with a drilled hole through it (a via's ring).
+    fn add_ring(&mut self, center: [f64; 2], radius: f64, hole: f64, z0: f64, z1: f64) {
+        if !(hole.is_finite() && hole > 1e-9 && hole < radius) {
+            self.add_circle(center, radius, z0, z1);
+            return;
+        }
+        let Some(region) = via_region(center, radius, hole) else { return };
+        self.add_region(&region, z0, z1);
+    }
+
+    /// A pad's copper: its outline, with the holes its drills make.
+    fn add_pad(&mut self, points: &[[f64; 2]], holes: &[Loop2], z0: f64, z1: f64) {
+        if holes.is_empty() {
+            self.add_loop(points, z0, z1);
+            return;
+        }
+        let Some(outer) = clean_loop(points) else { return };
+        self.add_region(&Region2 { outer, holes: holes.to_vec() }, z0, z1);
+    }
+
+    /// A region (a filled loop, maybe with holes) as a closed mesh.
+    fn add_region(&mut self, region: &Region2, z0: f64, z1: f64) {
+        if let Ok(mesh) = extrude_regions(std::slice::from_ref(region), z0, z1) {
+            self.add_mesh(mesh.positions, mesh.triangles);
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -1576,17 +1623,18 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
     for (front_side, width, points) in track_polylines(&board.tracks) {
         let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
         let plate = if front_side { &mut front } else { &mut back };
-        add(plate, &|p| p.add_track(&points, width, z0, z1));
+        add(plate, &|p| p.add_track(&points, width, false, z0, z1));
     }
     for via in &board.vias {
         let center = [via.at[0], -via.at[1]];
         let radius = via.size * 0.5;
+        let hole = via.drill * 0.5;
         let two_sided = via.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
         if two_sided || via.layers.iter().any(|l| l == "F.Cu") {
-            add(&mut front, &|p| p.add_circle(center, radius, top, bottom));
+            add(&mut front, &|p| p.add_ring(center, radius, hole, top, bottom));
         }
         if two_sided || via.layers.iter().any(|l| l == "B.Cu") {
-            add(&mut back, &|p| p.add_circle(center, radius, under, under_top));
+            add(&mut back, &|p| p.add_ring(center, radius, hole, under, under_top));
         }
     }
     for zone in &board.zones {
@@ -1620,13 +1668,15 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
                     continue;
                 }
                 let loops = pad_loops(pad);
+                // A through-hole pad's drill is a hole through its copper too.
+                let holes = pad_drill_holes(pad, &transform);
                 for loop_ in loops {
                     let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
                     if on_front {
-                        add(&mut front, &|p| p.add_loop(&points, top, bottom));
+                        add(&mut front, &|p| p.add_pad(&points, &holes, top, bottom));
                     }
                     if on_back {
-                        add(&mut back, &|p| p.add_loop(&points, under, under_top));
+                        add(&mut back, &|p| p.add_pad(&points, &holes, under, under_top));
                     }
                 }
             }
@@ -1644,7 +1694,7 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
         if graphic.filled && points.len() >= 3 {
             add(plate, &|p| p.add_loop(&points, z0, z1));
         } else {
-            add(plate, &|p| p.add_track(&points, graphic.width, z0, z1));
+            add(plate, &|p| p.add_track(&points, graphic.width, graphic.closed, z0, z1));
         }
     }
     let mut text_failed = false;
@@ -1721,7 +1771,7 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
     };
     // A routed trace is one item, however many legs KiCad stores it in.
     for (front_side, width, points) in track_polylines(&board.tracks) {
-        let regions: Vec<Region2> = stroke_outline(&points, width).and_then(|outline| points_region(&outline)).into_iter().collect();
+        let regions: Vec<Region2> = stroke_region(&points, width, false).into_iter().collect();
         if front_side {
             push(&mut front, regions);
         } else {
@@ -1731,16 +1781,13 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
     for via in &board.vias {
         let center = [via.at[0], -via.at[1]];
         let radius = via.size * 0.5;
-        if !(radius.is_finite() && radius > 1e-9) {
-            continue;
-        }
-        let circle = circle_points(center, radius);
+        let hole = via.drill * 0.5;
         let two_sided = via.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
         if two_sided || via.layers.iter().any(|l| l == "F.Cu") {
-            push(&mut front, points_region(&circle).into_iter().collect());
+            push(&mut front, via_region(center, radius, hole).into_iter().collect());
         }
         if two_sided || via.layers.iter().any(|l| l == "B.Cu") {
-            push(&mut back, points_region(&circle).into_iter().collect());
+            push(&mut back, via_region(center, radius, hole).into_iter().collect());
         }
     }
     for zone in &board.zones {
@@ -1767,11 +1814,14 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
                 if !on_front && !on_back {
                     continue;
                 }
+                // A through-hole pad's drill is a hole through its copper too.
+                let holes = pad_drill_holes(pad, &transform);
                 let regions: Vec<Region2> = pad_loops(pad)
                     .into_iter()
                     .filter_map(|loop_| {
                         let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
-                        points_region(&points)
+                        let outer = clean_loop(&points)?;
+                        Some(Region2 { outer, holes: holes.clone() })
                     })
                     .collect();
                 if on_front {
@@ -1792,7 +1842,7 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         let regions: Vec<Region2> = if graphic.filled && points.len() >= 3 {
             points_region(&points).into_iter().collect()
         } else {
-            stroke_outline(&points, graphic.width).and_then(|outline| points_region(&outline)).into_iter().collect()
+            stroke_region(&points, graphic.width, graphic.closed).into_iter().collect()
         };
         push(if layer == "F.Cu" { &mut front } else { &mut back }, regions);
     }
@@ -1889,7 +1939,7 @@ fn silkscreen_meshes(board: &KicadBoard, thickness: f64, warnings: &mut Vec<Stri
             add(plate, &|p| p.add_loop(&points, z0, z1));
         } else {
             let width = if stroke.width > 0.0 { stroke.width } else { 0.15 };
-            add(plate, &|p| p.add_track(&points, width, z0, z1));
+            add(plate, &|p| p.add_track(&points, width, stroke.closed, z0, z1));
         }
     };
     for graphic in &board.graphics {
@@ -1980,6 +2030,44 @@ fn pad_loops(pad: &KicadPad) -> Vec<Vec<[f64; 2]>> {
         p[1] = -s * x + c * y + pad.at[1];
     }
     vec![points]
+}
+
+/// A via's copper in the board frame: a disc, or a ring when the via is drilled.
+fn via_region(center: [f64; 2], radius: f64, hole: f64) -> Option<Region2> {
+    if !(radius.is_finite() && radius > 1e-9) {
+        return None;
+    }
+    let outer = clean_loop(&circle_points(center, radius))?;
+    let holes = if hole.is_finite() && hole > 1e-9 && hole < radius {
+        clean_loop(&circle_points(center, hole)).map(|l| l.reversed()).into_iter().collect()
+    } else {
+        Vec::new()
+    };
+    Some(Region2 { outer, holes })
+}
+
+/// The outline of a pad's drill in the footprint frame (a circle, or a slot for an oblong drill).
+fn pad_drill_points(pad: &KicadPad) -> Option<Vec<[f64; 2]>> {
+    let drill = pad.drill?;
+    let size = [drill[0].abs(), drill[1].abs()];
+    if !(size[0].is_finite() && size[1].is_finite()) || size[0].min(size[1]) <= 1e-6 || size[0].max(size[1]) > MAX_NUMBER {
+        return None;
+    }
+    let center = Vec2::new(pad.at[0], pad.at[1]);
+    let hole = if (size[0] - size[1]).abs() <= 1e-6 { Loop2::circle_from(center, size[0] * 0.5, 0.0) } else { slot_loop(center, size[0], size[1]) };
+    Some(hole.polyline(1e-3).to_vec().into_iter().map(|p| [p.x, p.y]).collect())
+}
+
+/// The holes a pad's drill makes, in the board frame and wound as region holes.
+fn pad_drill_holes(pad: &KicadPad, transform: &Mat) -> Vec<Loop2> {
+    pad_drill_points(pad)
+        .and_then(|points| {
+            let moved: Vec<[f64; 2]> = points.iter().map(|p| apply2(transform, p[0], p[1])).collect();
+            clean_loop(&moved)
+        })
+        .map(|l| l.reversed())
+        .into_iter()
+        .collect()
 }
 
 fn oval_points(sx: f64, sy: f64) -> Vec<[f64; 2]> {
