@@ -993,8 +993,8 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
     if options.copper == KicadCopper::Brep {
         copper = Some(copper_brep(&board, options.pads, thickness, &mut warnings)?);
     } else if options.copper != KicadCopper::None {
-        for (mesh, layer) in copper_meshes(&board, options.pads, thickness, options.copper, &mut warnings) {
-            meshes.push(mesh_data(format!("Copper {layer}"), mesh.positions, mesh.triangles, Some(COPPER_COLOR)));
+        for (mesh, name, color) in copper_meshes(&board, options.pads, thickness, options.copper, &mut warnings) {
+            meshes.push(mesh_data(name, mesh.positions, mesh.triangles, Some(color)));
             plan.bodies.push(None);
         }
     }
@@ -1831,9 +1831,12 @@ fn trim_around_drills(points: &[[f64; 2]], width: f64, drills: &[Vec<[f64; 2]>])
 
 /// Front and back copper plates: tracks, vias, pads and zones, modelled with their thickness or
 /// as a thin film overlaid on the board's surfaces.
-fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopper, warnings: &mut Vec<String>) -> Vec<(Plate, &'static str)> {
+fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopper, warnings: &mut Vec<String>) -> Vec<(Plate, String, [f32; 3])> {
     let mut front = Plate::default();
     let mut back = Plate::default();
+    // Pads whose mask is open: bare copper, a plate of their own so it can keep its colour.
+    let mut front_pads = Plate::default();
+    let mut back_pads = Plate::default();
     // Modelled copper has its real thickness; an overlay is a thin film on the board's
     // surfaces (below the silkscreen).
     let (top, bottom, under, under_top) = if mode == KicadCopper::Overlay {
@@ -1908,10 +1911,14 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
                 for loop_ in loops {
                     let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
                     if on_front {
-                        add(&mut front, &|p| p.add_pad(&points, &holes, top, bottom));
+                        let exposed = mask_open(pad, "F.Mask");
+                        let plate = if exposed { &mut front_pads } else { &mut front };
+                        add(plate, &|p| p.add_pad(&points, &holes, top, bottom));
                     }
                     if on_back {
-                        add(&mut back, &|p| p.add_pad(&points, &holes, under, under_top));
+                        let exposed = mask_open(pad, "B.Mask");
+                        let plate = if exposed { &mut back_pads } else { &mut back };
+                        add(plate, &|p| p.add_pad(&points, &holes, under, under_top));
                     }
                 }
             }
@@ -1966,12 +1973,19 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
     if too_many {
         warnings.push("additional copper items were skipped".into());
     }
-    let mut out = Vec::new();
+    let masked = masked_copper_color(board.color);
+    let mut out: Vec<(Plate, String, [f32; 3])> = Vec::new();
     if !front.is_empty() {
-        out.push((front, "F.Cu"));
+        out.push((front, "Copper F.Cu".to_string(), masked));
     }
     if !back.is_empty() {
-        out.push((back, "B.Cu"));
+        out.push((back, "Copper B.Cu".to_string(), masked));
+    }
+    if !front_pads.is_empty() {
+        out.push((front_pads, "Copper F.Cu pads".to_string(), COPPER_COLOR));
+    }
+    if !back_pads.is_empty() {
+        out.push((back_pads, "Copper B.Cu pads".to_string(), COPPER_COLOR));
     }
     out
 }
@@ -1981,8 +1995,21 @@ const MAX_BREP_COPPER_ITEMS: usize = 20_000;
 /// Most pieces in one compound copper body (the kernel tells a body's pieces apart up to a
 /// thousand shells; STEP export splits the compound into a solid per piece).
 const MAX_COMPOUND_SHELLS: usize = 512;
-/// Copper's colour on the board (a soldered copper tone).
+/// Copper where the solder mask is opened (a pad): bare metal.
 const COPPER_COLOR: [f32; 3] = [0.72, 0.45, 0.20];
+
+/// Copper seen through the solder mask: the board's own colour, warmed a little by the copper's,
+/// as mask-covered traces look on a real board. The mask itself is not modelled (it is thin and
+/// covers everything but its openings): its look comes from this colour.
+fn masked_copper_color(board_color: [f32; 3]) -> [f32; 3] {
+    let mix = |board: f32, copper: f32| (board * 0.8 + copper * 0.2).clamp(0.0, 1.0);
+    [mix(board_color[0], COPPER_COLOR[0]), mix(board_color[1], COPPER_COLOR[1]), mix(board_color[2], COPPER_COLOR[2])]
+}
+
+/// Is this side's solder mask opened over `pad` (its copper is bare metal)?
+fn mask_open(pad: &KicadPad, layer: &str) -> bool {
+    pad.layers.iter().any(|l| l == layer || l == "*.Mask")
+}
 
 /// Front and back copper as B-rep solids with the copper's real thickness: one body per layer,
 /// whose pieces (tracks, vias, zones, pads, copper graphics and text) are its lumps. The copper
@@ -1991,6 +2018,9 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
     let (top, bottom, under, under_top) = (thickness, thickness + COPPER_THICKNESS, -COPPER_THICKNESS, 0.0);
     let mut front: Vec<Region2> = Vec::new();
     let mut back: Vec<Region2> = Vec::new();
+    // Pads whose mask is open: bare copper, its own body so it can keep the copper's colour.
+    let mut front_pads: Vec<Region2> = Vec::new();
+    let mut back_pads: Vec<Region2> = Vec::new();
     let mut items = 0usize;
     let mut too_many = false;
     let mut push = |target: &mut Vec<Region2>, mut regions: Vec<Region2>| {
@@ -2063,10 +2093,12 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
                     })
                     .collect();
                 if on_front {
-                    push(&mut front, regions.clone());
+                    let exposed = mask_open(pad, "F.Mask");
+                    push(if exposed { &mut front_pads } else { &mut front }, regions.clone());
                 }
                 if on_back {
-                    push(&mut back, regions);
+                    let exposed = mask_open(pad, "B.Mask");
+                    push(if exposed { &mut back_pads } else { &mut back }, regions);
                 }
             }
         }
@@ -2116,9 +2148,16 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
     if too_many {
         warnings.push(format!("the board has more copper items than B-rep copper builds ({}); the rest were left out", MAX_BREP_COPPER_ITEMS));
     }
-    let mut out: Vec<(String, solidcraft_kernel::Body)> = Vec::new();
+    let masked = masked_copper_color(board.color);
+    let mut out: Vec<(String, solidcraft_kernel::Body, [f32; 3])> = Vec::new();
     let mut layers_done = 0.0f64;
-    for (regions, layer, z0, z1) in [(front, "F.Cu", top, bottom), (back, "B.Cu", under, under_top)] {
+    let sides = [
+        (front, "F.Cu", top, bottom, masked),
+        (back, "B.Cu", under, under_top, masked),
+        (front_pads, "F.Cu pads", top, bottom, COPPER_COLOR),
+        (back_pads, "B.Cu pads", under, under_top, COPPER_COLOR),
+    ];
+    for (regions, layer, z0, z1, color) in sides {
         if regions.is_empty() {
             continue;
         }
@@ -2138,19 +2177,19 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
                 if one.is_empty() { Err(error) } else { Ok(one) }
             })?;
             bodies.extend(built);
-            report_copper((layers_done + (n + 1) as f64 / pieces as f64) * 0.5);
+            report_copper((layers_done + (n + 1) as f64 / pieces as f64) * 0.25);
         }
-        layers_done += 0.5;
+        layers_done += 0.25;
         for (n, chunk) in bodies.chunks(MAX_COMPOUND_SHELLS).enumerate() {
             let pieces: Vec<&solidcraft_kernel::Body> = chunk.iter().collect();
             let body = solidcraft_kernel::compound(&pieces).map_err(|e| IoError::Invalid(format!("KiCad copper: {e}")))?;
             let name = if n == 0 { format!("Copper {layer}") } else { format!("Copper {layer} {}", n + 1) };
-            out.push((name, body));
+            out.push((name, body, color));
         }
     }
     report_copper(0.85);
     let exports: Vec<solidcraft_kernel::ExportBody> =
-        out.iter().map(|(name, body)| solidcraft_kernel::ExportBody { name: name.clone(), body, color: Some(COPPER_COLOR) }).collect();
+        out.iter().map(|(name, body, color)| solidcraft_kernel::ExportBody { name: name.clone(), body, color: Some(*color) }).collect();
     let header = solidcraft_kernel::StepHeader { file_name: "copper.step".into(), organization: "SolidCraft".into(), ..Default::default() };
     let step = solidcraft_kernel::step_export_bodies(&exports, &header).map_err(|e| IoError::Invalid(format!("KiCad copper STEP: {e}")))?;
     report_copper(1.0);

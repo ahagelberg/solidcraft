@@ -579,3 +579,33 @@ fn a_fill_contour_loses_its_degenerate_details() {
     assert_eq!(cleaned, vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]], "{cleaned:?}");
     assert!(clean_contour(&[[0.0, 0.0], [1.0, 0.0]]).is_none(), "two points are no polygon");
 }
+
+/// The solder mask is not modelled, but its look is: copper under the mask takes the board's
+/// colour (warmed by the copper's), and a pad whose mask is open stays bare copper.
+#[test]
+fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (segment (start 2 5) (end 12 5) (width 0.4) (layer "F.Cu") (net 1))
+      (footprint "test:SMD" (layer "F.Cu") (at 15 5)
+        (property "Reference" "R1")
+        (pad "1" smd rect (at 0 0) (size 2 1) (layers "F.Cu" "F.Paste" "F.Mask"))))"#;
+    let options = KicadOptions { copper: KicadCopper::Mesh, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "mask.kicad_pcb", &options, &mut load).unwrap();
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
+    let find = |name: &str| meshes.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} is missing"));
+    let masked = masked_copper_color(DEFAULT_BOARD_COLOR);
+    assert_eq!(find("Copper F.Cu").color, Some(masked), "the trace is under the mask");
+    assert_eq!(find("Copper F.Cu pads").color, Some(COPPER_COLOR), "the pad's mask is open");
+
+    // B-rep: the same split, the pad's copper keeping its colour through STEP.
+    let options = KicadOptions { copper: KicadCopper::Brep, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "mask.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    let pad = imp.bodies.iter().find(|b| b.name == "Copper F.Cu pads").expect("the pad's own body");
+    assert_eq!(pad.color, Some(COPPER_COLOR), "{:?}", imp.bodies.iter().map(|b| (&b.name, b.color)).collect::<Vec<_>>());
+    let trace = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("the trace's body");
+    assert_eq!(trace.color, Some(masked));
+}
