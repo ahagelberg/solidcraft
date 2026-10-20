@@ -41,8 +41,8 @@ mod gltf_in;
 pub use gltf_in::{GltfImport, Loader, MAX_GLTF_BYTES, MeshPlan, PlanPlace, glb_container, is_gltf_path, read_gltf};
 mod kicad_in;
 pub use kicad_in::{
-    DEFAULT_BOARD_COLOR, KicadBoard, KicadCopper, KicadDrill, KicadFootprint, KicadImport, KicadLoader, KicadModel, KicadOptions, KicadPad,
-    KicadRepresentation, KicadStroke, KicadText, KicadVia, KicadZone, MAX_KICAD_BYTES, is_kicad_path, kicad_board_mesh, kicad_board_path,
+    DEFAULT_BOARD_COLOR, KicadBoard, KicadCopper, KicadCopperBrep, KicadDrill, KicadFootprint, KicadImport, KicadLoader, KicadModel, KicadOptions,
+    KicadPad, KicadRepresentation, KicadStroke, KicadText, KicadVia, KicadZone, MAX_KICAD_BYTES, is_kicad_path, kicad_board_mesh, kicad_board_path,
     parse_kicad_board, parse_kicad_board_with, read_kicad,
 };
 mod obj;

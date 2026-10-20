@@ -164,7 +164,7 @@ fn copper_silk_colour_and_component_options_are_honoured_and_persist() {
 }
 
 #[test]
-fn copper_modes_choose_an_overlay_modelled_copper_or_nothing() {
+fn copper_modes_choose_an_overlay_modelled_copper_brep_or_nothing() {
     let dir = temp_dir("copper-modes");
     let source = r#"(kicad_pcb (general (thickness 1.6))
   (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
@@ -178,8 +178,26 @@ fn copper_modes_choose_an_overlay_modelled_copper_or_nothing() {
     let result = run(&mut s, "doc.open", json!({"path": board, "copper": "none", "components": false, "silkscreen": false}));
     let names: Vec<String> = result["bodies"].as_array().unwrap().iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
     assert!(!names.iter().any(|n| n == "Copper F.Cu"), "{names:?}");
-    let error = s.execute("doc.open", &json!({"path": board, "copper": "brep"})).expect_err("B-rep copper must be refused");
-    assert!(error.to_string().contains("not supported yet"), "{error}");
+    let mut s = Session::default();
+    let result = run(&mut s, "doc.open", json!({"path": board, "copper": "brep", "components": false, "silkscreen": false}));
+    assert_eq!(result["copper_brep"], json!(true), "{result}");
+    let names: Vec<String> = result["bodies"].as_array().unwrap().iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+    assert!(names.iter().any(|n| n == "Copper F.Cu"), "{names:?}");
+    // The track is a solid 9 × 0.3 × 0.035 mm on the board's top face.
+    let copper = s.world_state().bodies.iter().position(|b| b.name == "Copper F.Cu").expect("copper body");
+    let copper_box = body_box(&s, copper);
+    assert!(with_tolerance(copper_box, [1.0, -2.15, 1.6, 10.0, -1.85, 1.635]), "{copper_box:?}");
+    // The copper is in the board's component, so it moves with the board.
+    let board_component = s.doc.components.iter().find(|c| c.name == "board").expect("board component").id;
+    assert_eq!(s.doc.body_components.get("Copper F.Cu"), Some(&board_component), "{:?}", s.doc.body_components);
+    // The copper travels with the design: its STEP text is in the design file.
+    let design = dir.join("brep.solidcraft");
+    run(&mut s, "file.save_as", json!({"path": design}));
+    let mut reopened = Session::default();
+    run(&mut reopened, "doc.open", json!({"path": design}));
+    let copper = reopened.world_state().bodies.iter().position(|b| b.name == "Copper F.Cu").expect("copper body after reopening");
+    let copper_box = body_box(&reopened, copper);
+    assert!(with_tolerance(copper_box, [1.0, -2.15, 1.6, 10.0, -1.85, 1.635]), "{copper_box:?}");
     let _ = std::fs::remove_dir_all(dir);
 }
 

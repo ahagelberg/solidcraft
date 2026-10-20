@@ -33,7 +33,6 @@
   "Area": "面积",
   "Attachment": "附着",
   "B-rep (not supported yet)": "B-rep（尚不支持）",
-  "B-rep KiCad copper is not supported yet; choose Overlay or Modelled (mesh).": "尚不支持 B-rep 的 KiCad 铜层；请选择“叠加在板上”或“建模（网格）”。",
   "B-rep KiCad imports are not supported yet": "尚不支持 B-rep KiCad 导入",
   "BLEND SURFACE": "混合曲面",
   "BOUNDARY SURFACE": "边界曲面",

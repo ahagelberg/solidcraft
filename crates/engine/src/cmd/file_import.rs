@@ -319,6 +319,29 @@ pub(crate) fn add_in_component(
     Ok((id, Placed { component: top, occurrence: top_occ, name, components: comps.len(), joints: joint_ids }))
 }
 
+/// Add a STEP feature holding B-rep bodies already in `component`'s frame — a board's copper,
+/// which the board's own mesh feature cannot hold. The bodies are built in place (no components
+/// or placements of their own) and all belong to `component`.
+pub(crate) fn add_step_in_component(s: &mut Session, component: u64, file: &str, step: String, feature_name: &str) -> Result<u64> {
+    let imp = solidcraft_kernel::step_import_shared(&step).map_err(|e| EngineError::Other(format!("import: {e}")))?;
+    let kind = FeatureKind::Import { file: file.to_string(), step: step.into(), components: imp.tree.clone(), skip: Vec::new() };
+    let id = s.doc_mut().add_feature(kind, Some(feature_name))?;
+    if let Some(f) = s.doc_mut().feature_mut(id) {
+        f.component = component;
+    }
+    s.refresh();
+    if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
+        return Err(EngineError::Other(e));
+    }
+    let names: Vec<String> = s.model.state().bodies.iter().filter(|b| b.feature == id).map(|b| b.name.clone()).collect();
+    let d = s.doc_mut();
+    for name in names {
+        d.body_components.insert(name, component);
+    }
+    s.refresh();
+    Ok(id)
+}
+
 /// Record that body `names[b]` lives in component `c`, placed by `offset`.
 fn put_bodies(s: &mut Session, names: &[Option<String>], moves: &[(usize, u64, Mat)]) {
     if moves.is_empty() {

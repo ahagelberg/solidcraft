@@ -321,11 +321,23 @@ fn copper_overlay_is_a_flat_face_on_the_board() {
 }
 
 #[test]
-fn b_rep_copper_is_refused() {
-    let options = KicadOptions { copper: KicadCopper::Brep, components: false, ..Default::default() };
+fn b_rep_copper_is_solids_with_the_copper_thickness() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (segment (start 1 2) (end 10 2) (width 0.3) (layer "F.Cu") (net 1)))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
-    let error = read_kicad(BOARD.as_bytes(), "test.kicad_pcb", &options, &mut load).err().expect("B-rep copper must be refused");
-    assert!(error.to_string().contains("B-rep"), "{error}");
+    let imported = read_kicad(source.as_bytes(), "brep.kicad_pcb", &options, &mut load).unwrap();
+    let copper = imported.copper.expect("B-rep copper");
+    assert_eq!(copper.items, 1);
+    let imp = solidcraft_kernel::step_import_shared(&copper.step).expect("the copper is a STEP file");
+    let names: Vec<&str> = imp.bodies.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["Copper F.Cu"], "{names:?}");
+    let measure = solidcraft_kernel::measure(&imp.bodies[0].body).expect("copper bounds");
+    assert!((measure.bbox.min.z - 1.6).abs() < 1e-6 && (measure.bbox.max.z - 1.635).abs() < 1e-6, "{measure:?}");
+    // 9 mm long, 0.3 mm wide, 0.035 mm thick: a solid, not a film.
+    assert!((measure.volume - 9.0 * 0.3 * 0.035).abs() < 1e-6, "{measure:?}");
+    assert_eq!(imported.feature.body_names.len(), 1, "{:?}", imported.feature.body_names);
 }
 
 #[test]

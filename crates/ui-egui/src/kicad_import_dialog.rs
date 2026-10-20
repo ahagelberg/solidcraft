@@ -57,9 +57,6 @@ impl Dialog {
 
     /// Why the options cannot be imported yet, if they cannot.
     fn problem(&self) -> Option<&'static str> {
-        if self.copper == KicadCopper::Brep {
-            return Some("B-rep KiCad copper is not supported yet; choose Overlay or Modelled (mesh).");
-        }
         if !self.board_thickness && (!self.thickness.is_finite() || self.thickness <= 0.0 || self.thickness > 1000.0) {
             return Some("Board thickness must be greater than 0 and at most 1000 mm.");
         }
@@ -226,12 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn b_rep_copper_is_refused_in_the_window() {
+    fn b_rep_copper_is_an_offer_the_window_accepts() {
         let mut d = Dialog::new("board.kicad_pcb");
         d.copper = KicadCopper::Brep;
-        assert!(d.problem().is_some(), "B-rep copper is not supported yet");
-        d.copper = KicadCopper::Mesh;
-        assert!(d.problem().is_none());
+        assert!(d.problem().is_none(), "B-rep copper is not refused");
+        assert_eq!(d.params()["copper"], json!("brep"));
     }
 
     #[test]

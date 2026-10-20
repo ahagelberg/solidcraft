@@ -563,6 +563,22 @@ fn same_shared<T: PartialEq>(a: &Option<std::sync::Arc<T>>, b: &Option<std::sync
     }
 }
 
+/// A body holding all the shells of `bodies` without a boolean (pieces of an import that touch
+/// or overlap, such as a board's copper). The shells stay as they are.
+pub fn compound(bodies: &[&Body]) -> Result<Body> {
+    let mut shells = Vec::new();
+    for body in bodies {
+        if body.mesh.is_some() {
+            return Err(KernelError::Invalid("a mesh body cannot join a B-rep compound".into()));
+        }
+        shells.extend(body.solid.boundaries().iter().cloned());
+    }
+    if shells.is_empty() {
+        return Err(KernelError::Invalid("no bodies to combine".into()));
+    }
+    Body::new(mt::Solid::new_unchecked(shells))
+}
+
 impl Body {
     /// The very same body (shared data), not just an equal-looking one. Its history (how an
     /// operation made it) is not part of it: an operation that leaves a body as it is (a cut by

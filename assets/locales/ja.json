@@ -33,7 +33,6 @@
   "Area": "表面積",
   "Attachment": "アタッチメント",
   "B-rep (not supported yet)": "B-rep (未対応)",
-  "B-rep KiCad copper is not supported yet; choose Overlay or Modelled (mesh).": "B-repのKiCad銅はまだ対応していません。「オーバーレイ」または「モデル化（メッシュ）」を選択してください。",
   "B-rep KiCad imports are not supported yet": "B-repのKiCad読み込みはまだ対応していません",
   "BLEND SURFACE": "ブレンドサーフェス",
   "BOUNDARY SURFACE": "境界サーフェス",

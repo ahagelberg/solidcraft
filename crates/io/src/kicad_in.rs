@@ -81,7 +81,8 @@ pub enum KicadCopper {
     Overlay,
     /// Copper with its real thickness, as mesh bodies.
     Mesh,
-    /// Exact B-rep copper. Not supported yet.
+    /// Exact B-rep copper: solids with the copper's real thickness, built as a STEP import in
+    /// the board's component (copper on each layer is one body of separate lumps).
     Brep,
 }
 
@@ -272,10 +273,22 @@ pub struct KicadDrill {
     pub size: [f64; 2],
 }
 
+/// A board's copper as B-rep solids: STEP text for a second import in the board's component.
+#[derive(Clone, Debug, Default)]
+pub struct KicadCopperBrep {
+    /// The copper as a STEP file (ISO 10303-21), a body per copper layer.
+    pub step: String,
+    /// How many board items the copper has (for the reply's description).
+    pub items: usize,
+}
+
 /// A KiCad board and the reusable component placements it references.
 pub struct KicadImport {
     pub feature: crate::MeshFeature,
     pub plan: crate::MeshPlan,
+    /// B-rep copper, when the options ask for it: the engine adds it as a STEP import in the
+    /// board's component (the board and its models are the mesh feature).
+    pub copper: Option<KicadCopperBrep>,
 }
 
 /// Load a KiCad model reference. The engine resolves project and environment paths.
@@ -760,9 +773,6 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
     if options.representation == KicadRepresentation::Brep {
         return Err(IoError::Invalid("B-rep KiCad boards are not supported yet; choose mesh".into()));
     }
-    if options.copper == KicadCopper::Brep {
-        return Err(IoError::Invalid("B-rep KiCad copper is not supported yet; choose overlay or modelled mesh".into()));
-    }
     let board = parse_kicad_board_with(bytes, file, options.clone())?;
     let thickness = options.thickness.unwrap_or(board.thickness);
     let board_mesh = kicad_board_mesh(&board, thickness)?;
@@ -884,9 +894,12 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
             }
         }
     }
-    if options.copper != KicadCopper::None {
+    let mut copper = None;
+    if options.copper == KicadCopper::Brep {
+        copper = Some(copper_brep(&board, options.pads, thickness, &mut warnings)?);
+    } else if options.copper != KicadCopper::None {
         for (mesh, layer) in copper_meshes(&board, options.pads, thickness, options.copper, &mut warnings) {
-            meshes.push(mesh_data(format!("Copper {layer}"), mesh.positions, mesh.triangles, Some([0.72, 0.45, 0.20])));
+            meshes.push(mesh_data(format!("Copper {layer}"), mesh.positions, mesh.triangles, Some(COPPER_COLOR)));
             plan.bodies.push(None);
         }
     }
@@ -904,7 +917,7 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
         body_names,
         warnings,
     };
-    Ok(KicadImport { feature, plan })
+    Ok(KicadImport { feature, plan, copper })
 }
 
 fn component_name(footprint: &KicadFootprint, path: &str) -> String {
@@ -1086,20 +1099,53 @@ fn loop_sample(loop_: &Loop2) -> Vec2 {
     poly.first().copied().unwrap_or_default()
 }
 
-/// Extrude regions between `z0` and `z1` and merge them into one mesh.
-fn extrude_regions(regions: &[Region2], z0: f64, z1: f64) -> Result<solidcraft_geom::Mesh> {
+/// Extrude regions between `z0` and `z1` into B-rep bodies (one per region).
+fn extrude_regions_bodies(regions: &[Region2], z0: f64, z1: f64) -> Result<Vec<solidcraft_kernel::Body>> {
     if regions.is_empty() {
         return Err(IoError::Invalid("nothing to extrude".into()));
     }
+    if !(z0.is_finite() && z1.is_finite() && (z1 - z0).abs() >= 1e-6) {
+        return Err(IoError::Invalid("KiCad copper has a zero or invalid thickness".into()));
+    }
     let plane = Plane { origin: Vec3::new(0.0, 0.0, z0), ..Plane::XY };
-    let bodies = solidcraft_kernel::guard("KiCad profile", || solidcraft_kernel::extrude(&plane, regions, 0.0, (z1 - z0).abs()))
-        .map_err(|e| IoError::Invalid(format!("KiCad profile: {e}")))?;
+    solidcraft_kernel::guard("KiCad profile", || solidcraft_kernel::extrude(&plane, regions, 0.0, (z1 - z0).abs()))
+        .map_err(|e| IoError::Invalid(format!("KiCad profile: {e}")))
+}
+
+/// Extrude regions between `z0` and `z1` and merge them into one mesh.
+fn extrude_regions(regions: &[Region2], z0: f64, z1: f64) -> Result<solidcraft_geom::Mesh> {
+    let bodies = extrude_regions_bodies(regions, z0, z1)?;
     let mut out = solidcraft_geom::Mesh::default();
     for body in &bodies {
         let mesh = body.tessellate(0.05).map_err(|e| IoError::Invalid(format!("KiCad mesh: {e}")))?;
         out.append(&mesh, 0);
     }
     Ok(out)
+}
+
+/// A filled region with no holes from a closed polygon outline.
+fn points_region(points: &[[f64; 2]]) -> Option<Region2> {
+    clean_loop(points).map(|outer| Region2 { outer, holes: Vec::new() })
+}
+
+/// One quad per straight segment of a track (a stroke of `width` along `points`).
+fn track_quads(points: &[[f64; 2]], width: f64) -> Vec<[[f64; 2]; 4]> {
+    let mut out = Vec::new();
+    if points.len() < 2 || !(width.is_finite() && width > 0.0) {
+        return out;
+    }
+    let half = width * 0.5;
+    for pair in points.windows(2) {
+        let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else { continue };
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len = (dx * dx + dy * dy).sqrt();
+        if !len.is_finite() || len < 1e-9 {
+            continue;
+        }
+        let (nx, ny) = (-dy / len * half, dx / len * half);
+        out.push([[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]]);
+    }
+    out
 }
 
 /// How finely a text outline curve is drawn (mm).
@@ -1343,19 +1389,7 @@ impl Plate {
     }
 
     fn add_track(&mut self, points: &[[f64; 2]], width: f64, z0: f64, z1: f64) {
-        if points.len() < 2 || !(width.is_finite() && width > 0.0) {
-            return;
-        }
-        let half = width * 0.5;
-        for pair in points.windows(2) {
-            let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else { continue };
-            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-            let len = (dx * dx + dy * dy).sqrt();
-            if len < 1e-9 {
-                continue;
-            }
-            let (nx, ny) = (-dy / len * half, dx / len * half);
-            let quad = [[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]];
+        for quad in track_quads(points, width) {
             self.add_loop(&quad, z0, z1);
         }
     }
@@ -1513,6 +1547,175 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
         out.push((back, "B.Cu"));
     }
     out
+}
+
+/// Most copper items one B-rep layer may have: each is a solid to build, export and keep.
+const MAX_BREP_COPPER_ITEMS: usize = 20_000;
+/// Most pieces in one compound copper body (the kernel tells a body's pieces apart up to a
+/// thousand shells; STEP export splits the compound into a solid per piece).
+const MAX_COMPOUND_SHELLS: usize = 512;
+/// Copper's colour on the board (a soldered copper tone).
+const COPPER_COLOR: [f32; 3] = [0.72, 0.45, 0.20];
+
+/// Front and back copper as B-rep solids with the copper's real thickness: one body per layer,
+/// whose pieces (tracks, vias, zones, pads, copper graphics and text) are its lumps. The copper
+/// comes back as STEP text, added as an import in the board's component.
+fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Vec<String>) -> Result<KicadCopperBrep> {
+    let (top, bottom, under, under_top) = (thickness, thickness + COPPER_THICKNESS, -COPPER_THICKNESS, 0.0);
+    let mut front: Vec<Region2> = Vec::new();
+    let mut back: Vec<Region2> = Vec::new();
+    let mut items = 0usize;
+    let mut too_many = false;
+    let mut push = |target: &mut Vec<Region2>, mut regions: Vec<Region2>| {
+        if regions.is_empty() {
+            return;
+        }
+        if items >= MAX_BREP_COPPER_ITEMS {
+            too_many = true;
+            return;
+        }
+        items += 1;
+        target.append(&mut regions);
+    };
+    for track in &board.tracks {
+        let points: Vec<[f64; 2]> = track.points.iter().map(|p| [p[0], -p[1]]).collect();
+        let regions: Vec<Region2> = track_quads(&points, track.width).iter().filter_map(|q| points_region(q)).collect();
+        push(if track.layer == "F.Cu" { &mut front } else { &mut back }, regions);
+    }
+    for via in &board.vias {
+        let center = [via.at[0], -via.at[1]];
+        let radius = via.size * 0.5;
+        if !(radius.is_finite() && radius > 1e-9) {
+            continue;
+        }
+        let circle = circle_points(center, radius);
+        let two_sided = via.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
+        if two_sided || via.layers.iter().any(|l| l == "F.Cu") {
+            push(&mut front, points_region(&circle).into_iter().collect());
+        }
+        if two_sided || via.layers.iter().any(|l| l == "B.Cu") {
+            push(&mut back, points_region(&circle).into_iter().collect());
+        }
+    }
+    for zone in &board.zones {
+        let contours: Vec<Loop2> = zone
+            .contours
+            .iter()
+            .filter_map(|c| {
+                let points: Vec<Vec2> = c.iter().map(|p| Vec2::new(p[0], -p[1])).collect();
+                (points.len() >= 3).then(|| Loop2::polygon(&points))
+            })
+            .collect();
+        if contours.is_empty() {
+            continue;
+        }
+        let regions = regions_from_loops(contours, None);
+        push(if zone.layer == "F.Cu" { &mut front } else { &mut back }, regions);
+    }
+    if pads {
+        for footprint in &board.footprints {
+            let transform = footprint_world(footprint);
+            for pad in &footprint.pads {
+                let on_front = pad.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
+                let on_back = pad.layers.iter().any(|l| l == "B.Cu" || l == "*.Cu" || l == "F&B.Cu");
+                if !on_front && !on_back {
+                    continue;
+                }
+                let regions: Vec<Region2> = pad_loops(pad)
+                    .into_iter()
+                    .filter_map(|loop_| {
+                        let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
+                        points_region(&points)
+                    })
+                    .collect();
+                if on_front {
+                    push(&mut front, regions.clone());
+                }
+                if on_back {
+                    push(&mut back, regions);
+                }
+            }
+        }
+    }
+    for graphic in &board.graphics {
+        let layer = graphic.layer.as_str();
+        if !is_outer_copper(layer) {
+            continue;
+        }
+        let points: Vec<[f64; 2]> = graphic.points.iter().map(|p| [p[0], -p[1]]).collect();
+        let regions: Vec<Region2> = if graphic.filled && points.len() >= 3 {
+            points_region(&points).into_iter().collect()
+        } else {
+            track_quads(&points, graphic.width).iter().filter_map(|q| points_region(q)).collect()
+        };
+        push(if layer == "F.Cu" { &mut front } else { &mut back }, regions);
+    }
+    let mut text_failed = false;
+    {
+        let mut one = |text: &KicadText, origin: Vec2, angle: f64| {
+            if !is_outer_copper(&text.layer) {
+                return;
+            }
+            let regions = text_regions(text, origin, angle);
+            if regions.is_empty() {
+                text_failed = true;
+                return;
+            }
+            push(if text.layer == "F.Cu" { &mut front } else { &mut back }, regions);
+        };
+        let board_frame = board_to_world();
+        for text in &board.texts {
+            let origin = apply2(&board_frame, text.at[0], text.at[1]);
+            one(text, Vec2::new(origin[0], origin[1]), text.at[2].to_radians());
+        }
+        for footprint in &board.footprints {
+            let frame = footprint_world(footprint);
+            for text in &footprint.texts {
+                let origin = apply2(&frame, text.at[0], text.at[1]);
+                one(text, Vec2::new(origin[0], origin[1]), (footprint.at[2] + text.at[2]).to_radians());
+            }
+        }
+    }
+    if text_failed {
+        warnings.push("some copper text could not be built".into());
+    }
+    if too_many {
+        warnings.push(format!("the board has more copper items than B-rep copper builds ({}); the rest were left out", MAX_BREP_COPPER_ITEMS));
+    }
+    let mut out: Vec<(String, solidcraft_kernel::Body)> = Vec::new();
+    for (regions, layer, z0, z1) in [(front, "F.Cu", top, bottom), (back, "B.Cu", under, under_top)] {
+        if regions.is_empty() {
+            continue;
+        }
+        let bodies = extrude_regions_bodies(&regions, z0, z1).or_else(|error| {
+            // One bad item must not lose the layer: build them one by one.
+            let mut one = Vec::new();
+            for region in &regions {
+                match extrude_regions_bodies(std::slice::from_ref(region), z0, z1) {
+                    Ok(mut bodies) => one.append(&mut bodies),
+                    Err(_) => warnings.push(format!("a copper item on {layer} could not be built")),
+                }
+            }
+            if one.is_empty() { Err(error) } else { Ok(one) }
+        })?;
+        for (n, chunk) in bodies.chunks(MAX_COMPOUND_SHELLS).enumerate() {
+            let pieces: Vec<&solidcraft_kernel::Body> = chunk.iter().collect();
+            let body = solidcraft_kernel::compound(&pieces).map_err(|e| IoError::Invalid(format!("KiCad copper: {e}")))?;
+            let name = if n == 0 { format!("Copper {layer}") } else { format!("Copper {layer} {}", n + 1) };
+            out.push((name, body));
+        }
+    }
+    let exports: Vec<solidcraft_kernel::ExportBody> =
+        out.iter().map(|(name, body)| solidcraft_kernel::ExportBody { name: name.clone(), body, color: Some(COPPER_COLOR) }).collect();
+    let header = solidcraft_kernel::StepHeader { file_name: "copper.step".into(), organization: "SolidCraft".into(), ..Default::default() };
+    let step = solidcraft_kernel::step_export_bodies(&exports, &header).map_err(|e| IoError::Invalid(format!("KiCad copper STEP: {e}")))?;
+    if step.len() > crate::MAX_STEP_BYTES {
+        return Err(IoError::Invalid(format!(
+            "this board's B-rep copper exceeds the STEP size limit ({} MB); choose modelled mesh",
+            crate::MAX_STEP_BYTES >> 20
+        )));
+    }
+    Ok(KicadCopperBrep { step, items })
 }
 
 /// Front and back silkscreen plates.
