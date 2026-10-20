@@ -338,6 +338,9 @@ impl<'a> Parser<'a> {
     }
 
     fn value(&mut self, depth: usize) -> Result<Value> {
+        if depth > MAX_DEPTH {
+            return Err(IoError::Invalid(format!("VRML model nesting exceeds {MAX_DEPTH}")));
+        }
         match self.peek().cloned() {
             Some(Token::Number(n)) => {
                 self.next += 1;

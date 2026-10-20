@@ -47,6 +47,19 @@ fn refuses_vrml_1_and_unterminated_files() {
 }
 
 #[test]
+fn refuses_excessively_nested_lists() {
+    let nesting = MAX_DEPTH + 1;
+    let mut source = String::from("#VRML V2.0 utf8\nShape { geometry Box { size ");
+    source.push_str(&"[".repeat(nesting));
+    source.push('1');
+    source.push_str(&"]".repeat(nesting));
+    source.push_str(" } }\n");
+
+    let error = read_vrml(source.as_bytes(), "nested.wrl").unwrap_err();
+    assert!(error.to_string().contains("nesting exceeds"), "{error}");
+}
+
+#[test]
 fn refuses_a_model_without_geometry() {
     let error = read_vrml(b"#VRML V2.0 utf8\nGroup { children [ ] }\n", "empty.wrl").unwrap_err();
     assert!(error.to_string().contains("no geometry"));
