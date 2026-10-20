@@ -143,6 +143,40 @@ fn f2_renames_the_picked_row_like_a_file_browser() {
 }
 
 #[test]
+fn clicking_elsewhere_cancels_new_folder_and_rename_edits() {
+    let mut h = panel();
+    h.run(&json!([
+        { "widget": "New Folder" },
+        { "text": "abandoned" },
+        { "widget": "Refresh" },
+        { "widget": "New Folder" },
+        { "text": "Kept" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } }
+    ]))
+    .unwrap();
+    assert!(!h.dir.join("abandoned").exists(), "clicking Refresh created the unfinished folder");
+    assert!(h.dir.join("Kept").is_dir(), "the canceled editor blocked starting a new folder");
+
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/dish.solidcraft" } } },
+        { "until": { "count": { "name": "designs:designs", "value": 2 } } },
+        { "click": { "handle": "designs:row:plate" }, "button": "right" },
+        { "widget": "Rename" },
+        { "click": { "handle": "designs:row:dish" } },
+        { "key": "F2" },
+        { "text": "cup" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:designs", "value": 2 } } }
+    ]))
+    .unwrap();
+    assert!(h.dir.join("plate.solidcraft").is_file(), "the unfinished rename was committed");
+    assert!(h.dir.join("cup.solidcraft").is_file(), "the outside click did not allow renaming the selected row");
+    assert!(!h.dir.join("dish.solidcraft").exists());
+}
+
+#[test]
 fn the_panel_can_be_dragged_wider_and_remembers_it() {
     let mut h = panel();
     let before = solidcraft_ui_egui::scenario::rect_of("designs:panel").expect("the panel was drawn");
