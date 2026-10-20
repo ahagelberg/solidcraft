@@ -31,6 +31,7 @@ pub struct State {
     current: Option<PathBuf>,
     entries: Option<Entries>,
     listing: Option<Receiver<Value>>,
+    root_check: Option<(String, Receiver<Result<(), String>>)>,
     thumbnails: HashMap<String, Option<egui::TextureHandle>>,
     thumb_rx: Option<Receiver<(String, Option<egui::ColorImage>)>>,
     error: Option<String>,
@@ -41,9 +42,9 @@ pub struct State {
     failed: Option<String>,
     rename: Option<Rename>,
     new_folder: Option<String>,
+    new_folder_focus: bool,
     confirm: Option<Confirm>,
-    /// A repository whose missing folder was already attempted this session (by path, so a
-    /// corrected path is tried again).
+    /// A repository root whose existence/create check was done (by path, so corrections are tried).
     created: Option<String>,
     /// The row picked last.
     selected: Option<String>,
@@ -107,7 +108,7 @@ struct FolderRow {
 struct DesignRow {
     name: String,
     path: String,
-    modified: u64,
+    modified_display: String,
     /// `design`, or what imports it: `step` (STEP, IGES, FreeCAD, Rhino) or `mesh` (3MF, STL,
     /// OBJ, glTF).
     kind: String,
@@ -141,7 +142,7 @@ impl Entries {
                 Some(DesignRow {
                     name: d.get("name").and_then(Value::as_str)?.to_string(),
                     path: d.get("path").and_then(Value::as_str)?.to_string(),
-                    modified: d.get("modified").and_then(Value::as_u64).unwrap_or(0),
+                    modified_display: crate::local_time::format(d.get("modified").and_then(Value::as_u64).unwrap_or(0)),
                     kind: d.get("kind").and_then(Value::as_str).unwrap_or("design").to_string(),
                     versions: d.get("versions").and_then(Value::as_u64).unwrap_or(1).clamp(1, 100_000) as u32,
                 })
@@ -192,11 +193,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !app.services.designs_panel || !app.preferences.repositories_panel {
         app.designs.panel_rect = None;
         app.designs.version_menu = None;
+        app.designs.rename = None;
+        app.designs.new_folder = None;
         return;
     }
     accept_drag(app, ui.ctx());
     if !app.ui.show_designs {
         app.designs.panel_rect = None;
+        app.designs.rename = None;
+        app.designs.new_folder = None;
         return;
     }
     pump(app, ui.ctx());
@@ -287,7 +292,7 @@ fn open_folder_properties(app: &mut SolveApp, path: String, name: String) {
     app.designs.properties = Some(crate::designs_properties::Properties::new(path, name, description));
 }
 
-/// Follow the active repository: reset the listing when it changes, create a missing folder once,
+/// Follow the active repository: reset the listing when it changes, check/create its root once,
 /// refresh when the window regains focus, and start a listing when one is due.
 fn sync(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(repository) = active_repository(app) else {
@@ -318,27 +323,6 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
         app.designs.failed = None;
     }
     let root = path.to_string_lossy().into_owned();
-    // A repository folder that is not there is made, with its parents, the first time the panel
-    // shows it (and again if the path is edited to another one).
-    if !path.is_dir() && app.designs.created.as_deref() != Some(root.as_str()) {
-        app.designs.created = Some(root.clone());
-        let params = json!({ "path": root, "parents": true });
-        match app.session.execute("designs.folder_new", &params) {
-            Ok(_) => {
-                app.designs.entries = None;
-                app.designs.error = None;
-                app.designs.failed = None;
-            }
-            Err(e) => {
-                // Reported as it is (not a spinner): the panel draws the message and a way to
-                // try again.
-                app.designs.error = Some(e.to_string());
-                app.designs.failed = Some(root);
-                app.designs.entries = None;
-                return;
-            }
-        }
-    }
     let focused = ctx.input(|i| i.focused);
     if focused && !app.designs.focused {
         app.designs.entries = None;
@@ -347,6 +331,36 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
         app.designs.created = None;
     }
     app.designs.focused = focused;
+    // A repository folder that is not there is made, with its parents, the first time the panel
+    // shows it (and again if the path is edited to another one).
+    if app.designs.created.as_deref() != Some(root.as_str()) {
+        app.designs.created = Some(root.clone());
+        let (tx, rx) = mpsc::channel();
+        let worker_root = root.clone();
+        let spawned = std::thread::Builder::new().name("designs-root".into()).spawn(move || {
+            let folder = PathBuf::from(&worker_root);
+            let result = if folder.is_dir() {
+                Ok(())
+            } else {
+                std::fs::create_dir_all(&folder).map_err(|e| format!("designs.folder_new: {worker_root}: {e}"))
+            };
+            let _ = tx.send(result);
+        });
+        match spawned {
+            Ok(_) => app.designs.root_check = Some((root.clone(), rx)),
+            Err(_) => {
+                app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+                app.designs.failed = Some(root);
+                app.designs.root_check = None;
+                app.designs.entries = None;
+                return;
+            }
+        }
+    }
+    if app.designs.root_check.as_ref().is_some_and(|(checking, _)| checking == &root) {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        return;
+    }
     let shown = app.designs.current.clone().unwrap_or(path);
     let shown_text = shown.to_string_lossy().into_owned();
     // A folder that could not be read is not listed again on its own: its message stays until the
@@ -384,6 +398,33 @@ fn start_listing(app: &mut SolveApp, path: &Path, ctx: &egui::Context) {
 
 /// Collect worker results.
 fn pump(app: &mut SolveApp, ctx: &egui::Context) {
+    let root_result = app.designs.root_check.as_ref().and_then(|(path, rx)| match rx.try_recv() {
+        Ok(result) => Some((path.clone(), Ok(result))),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some((path.clone(), Err(()))),
+    });
+    if let Some((path, result)) = root_result {
+        app.designs.root_check = None;
+        if app.designs.created.as_deref() == Some(path.as_str()) {
+            match result {
+                Ok(Ok(())) => {
+                    app.designs.entries = None;
+                    app.designs.error = None;
+                    app.designs.failed = None;
+                }
+                Ok(Err(error)) => {
+                    app.designs.error = Some(error);
+                    app.designs.failed = Some(path);
+                    app.designs.entries = None;
+                }
+                Err(()) => {
+                    app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+                    app.designs.failed = Some(path);
+                    app.designs.entries = None;
+                }
+            }
+        }
+    }
     let received = app.designs.listing.as_ref().and_then(|rx| match rx.try_recv() {
         Ok(v) => Some(Ok(v)),
         Err(TryRecvError::Empty) => None,
@@ -604,16 +645,17 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
         if app.designs.new_folder.is_some() {
             let mut name = app.designs.new_folder.take().unwrap_or_default();
             let id = egui::Id::new("designs-new-folder");
-            // Read the keys before the text field consumes them (it is focused from the
-            // previous frame).
             let focused = ui.memory(|m| m.has_focus(id));
             let entered = focused && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let cancelled = focused && ui.input(|i| i.key_pressed(egui::Key::Escape));
             let response = ui.add(egui::TextEdit::singleline(&mut name).id(id).desired_width(130.0).hint_text(crate::i18n::tr("designs.name")));
-            response.request_focus();
+            if app.designs.new_folder_focus {
+                response.request_focus();
+                app.designs.new_folder_focus = false;
+            }
             if ui.button(crate::i18n::tr("designs.create")).clicked() || entered {
                 create_folder(app, &name);
-            } else if cancelled {
+            } else if cancelled || response.lost_focus() {
                 app.designs.new_folder = None;
             } else {
                 app.designs.new_folder = Some(name);
@@ -623,6 +665,7 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         } else if ui.button(crate::i18n::tr("designs.new_folder")).clicked() {
             app.designs.new_folder = Some(String::new());
+            app.designs.new_folder_focus = true;
         }
         if ui.button(crate::i18n::tr("designs.refresh")).clicked() {
             app.designs.entries = None;
@@ -656,11 +699,12 @@ fn plain(error: &str) -> &str {
 }
 
 fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
-    crate::scenario::publish_count("designs:loading", if app.designs.listing.is_some() { 1.0 } else { 0.0 });
-    let unavailable = app.designs.entries.is_none() && app.designs.listing.is_none() && app.designs.error.is_some();
+    let loading = app.designs.listing.is_some() || app.designs.root_check.is_some();
+    crate::scenario::publish_count("designs:loading", if loading { 1.0 } else { 0.0 });
+    let unavailable = app.designs.entries.is_none() && !loading && app.designs.error.is_some();
     crate::scenario::publish_count("designs:unavailable", if unavailable { 1.0 } else { 0.0 });
     let Some(entries) = app.designs.entries.take() else {
-        if app.designs.listing.is_some() {
+        if loading {
             ui.add(egui::Spinner::new().size(18.0));
         } else if let Some(error) = &app.designs.error {
             // The folder is not there and could not be made, or it cannot be read: say so, and
@@ -685,18 +729,21 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     let mut actions = Vec::new();
     crate::scenario::publish_count("designs:folders", entries.folders.len() as f64);
     crate::scenario::publish_count("designs:designs", entries.designs.len() as f64);
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for folder in &entries.folders {
-            folder_row(app, ui, t, folder, &mut actions);
-        }
-        for design in &entries.designs {
-            design_row(app, ui, t, design, &mut actions);
-        }
-        if entries.folders.is_empty() && entries.designs.is_empty() {
-            ui.label(RichText::new(crate::i18n::tr("designs.empty")).size(12.0).color(t.text_dim));
-        }
-        if entries.truncated {
-            ui.label(RichText::new(crate::i18n::tr("designs.truncated")).size(11.0).color(t.text_dim));
+    let row_count = entries.folders.len() + entries.designs.len();
+    let display_count = row_count + usize::from(entries.truncated || row_count == 0);
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, 54.0, display_count, |ui, visible_rows| {
+        for row in visible_rows {
+            if let Some(folder) = entries.folders.get(row) {
+                folder_row(app, ui, t, folder, &mut actions);
+            } else if let Some(design) = entries.designs.get(row.saturating_sub(entries.folders.len()))
+                && row < row_count
+            {
+                design_row(app, ui, t, design, &mut actions);
+            } else if row_count == 0 {
+                ui.label(RichText::new(crate::i18n::tr("designs.empty")).size(12.0).color(t.text_dim));
+            } else if entries.truncated {
+                ui.label(RichText::new(crate::i18n::tr("designs.truncated")).size(11.0).color(t.text_dim));
+            }
         }
     });
     if !app.designs.refresh {
@@ -752,8 +799,8 @@ fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str,
         let mut cancel = false;
         if let Some(rename) = app.designs.rename.as_mut() {
             let response = ui.put(name_rect, egui::TextEdit::singleline(&mut rename.name).id(id).desired_width(name_rect.width()));
-            response.request_focus();
             if rename.select_all {
+                response.request_focus();
                 // The name starts selected, so typing replaces it (as a file browser does).
                 let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
                 let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(rename.name.chars().count()));
@@ -763,7 +810,7 @@ fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str,
             }
             if entered {
                 commit = Some(rename.name.trim().to_string());
-            } else if escaped {
+            } else if escaped || response.lost_focus() {
                 cancel = true;
             }
         }
@@ -816,8 +863,7 @@ fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &Desig
     // importer's icon.
     let icon = if design.kind == "design" { "box" } else { "import" };
     draw_picture(app, ui, rect, &design.path, icon);
-    let sub = crate::local_time::format(design.modified);
-    row_text(app, ui, rect, &design.path, &design.name, &sub);
+    row_text(app, ui, rect, &design.path, &design.name, &design.modified_display);
     if design.kind == "design" {
         version_button(ui, rect, design, actions);
     }
