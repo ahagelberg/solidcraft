@@ -1537,6 +1537,9 @@ impl SolveApp {
                 return;
             }
         }
+        if !designs_shown {
+            designs_panel::show(self, ui);
+        }
         toolbar::toolbar(self, ui);
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
         let left_timeline = show_timeline && self.preferences.timeline_left;
@@ -1544,9 +1547,6 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        if !designs_shown {
-            designs_panel::show(self, ui);
-        }
         // A floating browser keeps the workspace the whole width: it is drawn over the view below.
         let browser_float = self.ui.show_browser && self.preferences.browser_float;
         if self.ui.show_browser && !browser_float {

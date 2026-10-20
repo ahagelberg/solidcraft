@@ -20,6 +20,16 @@ fn panel() -> Harness {
     h
 }
 
+#[test]
+fn designs_panel_spans_from_the_titlebar_and_shifts_the_toolbar() {
+    let _h = panel();
+    let browser = solidcraft_ui_egui::scenario::rect_of("designs:panel").expect("the Designs panel was drawn");
+    let toolbar = solidcraft_ui_egui::scenario::rect_of("toolbar").expect("the toolbar was drawn");
+    assert!((browser.top() - toolbar.top()).abs() < 1.0, "browser starts at {}, toolbar at {}", browser.top(), toolbar.top());
+    assert!(browser.right() <= toolbar.left() + 1.0, "toolbar starts at {}, browser ends at {}", toolbar.left(), browser.right());
+    assert!(browser.height() > toolbar.height(), "browser height {}, toolbar height {}", browser.height(), toolbar.height());
+}
+
 /// The scratch folder's entries, for failure messages.
 fn listing(h: &Harness) -> Vec<String> {
     std::fs::read_dir(&h.dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
