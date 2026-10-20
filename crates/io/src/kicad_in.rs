@@ -1952,12 +1952,14 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
                     if on_front {
                         let exposed = mask_open(pad, "F.Mask");
                         let plate = if exposed { &mut front_pads } else { &mut front };
-                        add(plate, &|p| p.add_pad(&points, &holes, top, bottom));
+                        let (z0, z1) = if exposed { (top, bottom + PAD_PROUD) } else { (top, bottom) };
+                        add(plate, &|p| p.add_pad(&points, &holes, z0, z1));
                     }
                     if on_back {
                         let exposed = mask_open(pad, "B.Mask");
                         let plate = if exposed { &mut back_pads } else { &mut back };
-                        add(plate, &|p| p.add_pad(&points, &holes, under, under_top));
+                        let (z0, z1) = if exposed { (under - PAD_PROUD, under_top) } else { (under, under_top) };
+                        add(plate, &|p| p.add_pad(&points, &holes, z0, z1));
                     }
                 }
             }
@@ -2034,6 +2036,11 @@ const MAX_BREP_COPPER_ITEMS: usize = 20_000;
 /// Most pieces in one compound copper body (the kernel tells a body's pieces apart up to a
 /// thousand shells; STEP export splits the compound into a solid per piece).
 const MAX_COMPOUND_SHELLS: usize = 512;
+/// How far copper in a mask opening stands above the masked copper (mm). They are the same foil
+/// in reality, but two coplanar faces in different colours (the masked trace and the bare pad it
+/// runs into) fight for the pixel; this keeps the bare pad on top.
+const PAD_PROUD: f64 = 0.005;
+
 /// Copper where the solder mask is opened (a pad): bare metal.
 const COPPER_COLOR: [f32; 3] = [0.72, 0.45, 0.20];
 
@@ -2196,8 +2203,8 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
     let sides = [
         (front, "F.Cu", top, bottom, masked),
         (back, "B.Cu", under, under_top, masked),
-        (front_pads, "F.Cu pads", top, bottom, COPPER_COLOR),
-        (back_pads, "B.Cu pads", under, under_top, COPPER_COLOR),
+        (front_pads, "F.Cu pads", top, bottom + PAD_PROUD, COPPER_COLOR),
+        (back_pads, "B.Cu pads", under - PAD_PROUD, under_top, COPPER_COLOR),
     ];
     for (regions, layer, z0, z1, color) in sides {
         if regions.is_empty() {
