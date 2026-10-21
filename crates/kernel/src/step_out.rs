@@ -1590,10 +1590,7 @@ fn pieces_by_shell(b: &Body) -> Option<Vec<Body>> {
     if volumes.iter().any(|volume| *volume <= 0.0) {
         return None;
     }
-    shells
-        .iter()
-        .map(|shell| Body::new(truck_modeling::Solid::new_unchecked(vec![shell.clone()])).ok())
-        .collect::<Option<Vec<_>>>()
+    shells.iter().map(|shell| Body::new(truck_modeling::Solid::new_unchecked(vec![shell.clone()])).ok()).collect::<Option<Vec<_>>>()
 }
 
 /// Faces in the exchange's shells (fewer after merging).
