@@ -429,6 +429,13 @@ impl KicadPaths {
 /// KiCad's own variable table — `environment.vars` in `kicad_common.json` — from the newest
 /// KiCad configured here: `~/.config/kicad/<version>` on Linux (`$XDG_CONFIG_HOME` when set),
 /// `%APPDATA%\kicad\<version>` on Windows, `~/Library/Preferences/kicad/<version>` on macOS.
+#[cfg(target_arch = "wasm32")]
+fn kicad_configured_variables() -> Vec<(String, String)> {
+    // The browser has no KiCad installed and no folders to list.
+    Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn kicad_configured_variables() -> Vec<(String, String)> {
     let mut roots = Vec::new();
     #[cfg(target_os = "windows")]
@@ -481,6 +488,8 @@ fn kicad_configured_variables() -> Vec<(String, String)> {
 
 /// The `environment.vars` table of a `kicad_common.json`, as text. Anything unexpected in the
 /// file (a missing table, a number or `null` where a path belongs) simply is not a variable.
+/// (The browser reads no KiCad settings, so there this is only the tests' entry point.)
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn kicad_variables_of(bytes: &[u8]) -> Vec<(String, String)> {
     let Ok(json) = serde_json::from_slice::<Value>(bytes) else { return Vec::new() };
     let Some(vars) = json.get("environment").and_then(|e| e.get("vars")).and_then(Value::as_object) else { return Vec::new() };
@@ -536,7 +545,8 @@ fn is_kicad_3dmodel_variable(name: &str) -> bool {
 }
 
 fn installed_kicad_3dmodel_dir() -> Option<std::path::PathBuf> {
-    let mut candidates = Vec::new();
+    // Told, not inferred: none of the platforms below is the browser, and there it stays empty.
+    let mut candidates: Vec<((u32, u32), std::path::PathBuf)> = Vec::new();
     #[cfg(target_os = "windows")]
     {
         for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
