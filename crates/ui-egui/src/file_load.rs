@@ -1008,12 +1008,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     (_, Some((_, d, t))) => crate::i18n::format("file_load.converting", &[("done", &(d + 1).to_string()), ("total", &t.to_string())]),
                     (1, _) => crate::i18n::tr("file_load.preparing_view").to_string(),
                     (2, _) => crate::i18n::tr("file_load.preparing_thumbnail").to_string(),
-                    _ if overall_total > 0 => {
-                        crate::i18n::format(
-                            "file_load.rebuilding",
-                            &[("done", &(overall_done + 1).min(overall_total).to_string()), ("total", &overall_total.to_string())],
-                        )
-                    }
+                    _ if overall_total > 0 => crate::i18n::format(
+                        "file_load.rebuilding",
+                        &[("done", &(overall_done + 1).min(overall_total).to_string()), ("total", &overall_total.to_string())],
+                    ),
                     _ => crate::i18n::tr("file_load.reading").to_string(),
                 }
             };

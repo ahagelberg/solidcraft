@@ -209,7 +209,8 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
 /// The dialog's pages, in order.
-pub const PAGES: [&str; 10] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI", "Repositories", "Plugins"];
+pub const PAGES: [&str; 10] =
+    ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI", "Repositories", "Plugins"];
 // Keep every existing page and its scenario identity; only their presentation is shared.
 const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 10] = [
     ui_kit::WindowPage { icon: "settings", label: "ui.general", handle: "prefs:page:General", scroll: true, draw: window_page::<0> },
