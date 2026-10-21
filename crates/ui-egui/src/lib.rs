@@ -1227,10 +1227,10 @@ impl SolveApp {
 
     /// Open a file the user chose: a KiCad board through its settings window, as a new design.
     pub fn open_chosen_file(&mut self, path: &str) {
+        self.home.open = false;
         if solidcraft_engine::io::is_kicad_path(path) {
             kicad_import_dialog::open(self, path);
         } else {
-            self.home.open = false;
             self.open_path_async(path);
         }
     }

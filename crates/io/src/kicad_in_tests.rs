@@ -11,7 +11,7 @@ const BOARD: &str = r#"(kicad_pcb
     (property "Reference" "R7")
     (property "Value" "10k")
     (model "${KICAD9_3DMODEL_DIR}/Resistor_SMD.3dshapes/R_0603.step"
-      (at (xyz 0 0 0.1))
+      (offset (xyz 0 0 0.1))
       (scale (xyz 1 1 1))
       (rotate (xyz 0 0 90))
     )
@@ -35,6 +35,81 @@ fn parses_thickness_footprint_properties_and_model_transform() {
     assert_eq!(model.rotate, [0.0, 0.0, 90.0]);
     assert_eq!(board.outlines.len(), 1);
     assert_eq!(board.outlines[0].len(), 4);
+}
+
+#[test]
+fn footprint_rotation_maps_from_kicads_y_down_frame() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (footprint "test:rotated" (layer "F.Cu") (at 10 20 90)))"#;
+    let board = parse_kicad_board(source.as_bytes(), "rotation.kicad_pcb").unwrap();
+    let footprint = board.footprints.first().expect("footprint");
+    let point = solidcraft_doc::apply_point(&footprint_place(footprint, false, 1.6), Vec3::new(1.0, 0.0, 0.0));
+    // KiCad turns a footprint at +90 a quarter turn counterclockwise, so its own +X points up
+    // the board: board Y 20 goes to 19, which is world Y -19 once KiCad's Y down is flipped.
+    assert!((point.x - 10.0).abs() < 1e-9, "{point:?}");
+    assert!((point.y + 19.0).abs() < 1e-9, "{point:?}");
+}
+
+#[test]
+fn models_stand_on_the_board_face_they_are_on() {
+    let footprint = |layer: &str| KicadFootprint {
+        reference: String::new(),
+        value: String::new(),
+        layer: layer.into(),
+        at: [10.0, 20.0, 90.0],
+        models: Vec::new(),
+        pads: Vec::new(),
+        graphics: Vec::new(),
+        texts: Vec::new(),
+    };
+    let front = solidcraft_doc::apply_point(&footprint_place(&footprint("F.Cu"), false, 1.6), Vec3::ZERO);
+    let back = solidcraft_doc::apply_point(&footprint_place(&footprint("B.Cu"), true, 1.6), Vec3::ZERO);
+    assert!((front.z - 1.6).abs() < 1e-9, "a front model stands on the top face: {front:?}");
+    assert!(back.z.abs() < 1e-9, "a back model starts at the bottom face: {back:?}");
+}
+
+#[test]
+fn model_offset_accepts_kicads_legacy_inches_token() {
+    let source = r#"(kicad_pcb (footprint "part" (at 0 0)
+      (model "part.step" (at (xyz 1 0 0)))
+      (model "part2.step" (offset (xyz 1 0 0)))))"#;
+    let board = parse_kicad_board(source.as_bytes(), "inches.kicad_pcb").unwrap();
+    let models = &board.footprints[0].models;
+    // KiCad's `at` token still carries the legacy inch offset; `offset` is millimetres.
+    assert!((models[0].at[0] - 25.4).abs() < 1e-9, "{:?}", models[0].at);
+    assert!((models[1].at[0] - 1.0).abs() < 1e-9, "{:?}", models[1].at);
+}
+
+#[test]
+fn model_rotation_is_applied_in_its_local_frame() {
+    let model = KicadModel { path: String::new(), at: [0.0; 3], scale: [1.0; 3], rotate: [0.0, 0.0, 90.0] };
+    // KiCad's +90 turns the model the other way in its Y-up world, so its own +X points to -Y.
+    let point = solidcraft_doc::apply_point(&model_local_matrix(&model, false), Vec3::X);
+    assert!(point.x.abs() < 1e-9, "{point:?}");
+    assert!((point.y + 1.0).abs() < 1e-9, "{point:?}");
+}
+
+#[test]
+fn model_rotation_order_is_x_then_y_then_z() {
+    let model = KicadModel { path: String::new(), at: [0.0; 3], scale: [1.0; 3], rotate: [90.0, 0.0, 90.0] };
+    let m = model_local_matrix(&model, false);
+    let x = solidcraft_doc::apply_vector(&m, Vec3::X);
+    let z = solidcraft_doc::apply_vector(&m, Vec3::Z);
+    // KiCad 10.0.1 puts this model's +X at world -Y and its +Z at world +X.
+    assert!(x.x.abs() < 1e-9 && (x.y + 1.0).abs() < 1e-9 && x.z.abs() < 1e-9, "{x:?}");
+    assert!((z.x - 1.0).abs() < 1e-9 && z.y.abs() < 1e-9 && z.z.abs() < 1e-9, "{z:?}");
+}
+
+#[test]
+fn a_back_side_model_is_turned_over_under_the_board() {
+    let model = KicadModel { path: String::new(), at: [0.0; 3], scale: [1.0; 3], rotate: [0.0; 3] };
+    let m = model_local_matrix(&model, true);
+    let x = solidcraft_doc::apply_vector(&m, Vec3::X);
+    let z = solidcraft_doc::apply_vector(&m, Vec3::Z);
+    // A half turn about X keeps +X and takes +Z down, as KiCad does for the back.
+    assert!((x.x - 1.0).abs() < 1e-9 && x.y.abs() < 1e-9 && x.z.abs() < 1e-9, "{x:?}");
+    assert!(z.x.abs() < 1e-9 && z.y.abs() < 1e-9 && (z.z + 1.0).abs() < 1e-9, "{z:?}");
 }
 
 #[test]
@@ -363,7 +438,7 @@ fn traces_stop_at_drilled_holes() {
       (footprint "test:TH" (layer "F.Cu") (at 10 5)
         (pad "1" thru_hole circle (at 0 0) (size 3 3) (drill 1.2) (layers "F.Cu" "B.Cu"))))"#;
     // Only the trace's copper: the pad's own ring is not built.
-    let options = KicadOptions { copper: KicadCopper::Mesh, pads: false, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Mesh, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "trace.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -372,14 +447,14 @@ fn traces_stop_at_drilled_holes() {
     let triangles: Vec<[u32; 3]> = copper.triangles.as_chunks::<3>().0.to_vec();
     let body = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
     let area = solidcraft_kernel::measure(&body).unwrap().volume / 0.035;
-    // 16 mm of trace, 1.6 mm of it left open: the 1.2 mm drill plus the stroke's own width.
-    assert!((area - 14.4 * 0.4).abs() < 0.05, "{area}");
+    // The trace stops at the pad; its copper and the remaining trace are one joined plate.
+    assert!(area > 10.5 && area < 11.5, "trace and pad copper area: {area}");
 
     // The B-rep copper is trimmed the same way, as two pieces.
-    let options = KicadOptions { copper: KicadCopper::Brep, pads: false, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "trace.kicad_pcb", &options, &mut load).unwrap();
-    assert_eq!(imported.copper.expect("B-rep copper").items, 2);
+    assert!(imported.copper.expect("B-rep copper").items >= 4, "trace and pad copper are included");
 }
 
 #[test]
@@ -423,7 +498,7 @@ fn through_hole_pad_copper_has_the_drill_through_it() {
       (footprint "test:TH" (layer "F.Cu") (at 10 5)
         (property "Reference" "J1")
         (pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "F.Cu" "B.Cu"))))"#;
-    let options = KicadOptions { copper: KicadCopper::Brep, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "pad.kicad_pcb", &options, &mut load).unwrap();
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
@@ -590,7 +665,7 @@ fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
       (footprint "test:SMD" (layer "F.Cu") (at 15 5)
         (property "Reference" "R1")
         (pad "1" smd rect (at 0 0) (size 2 1) (layers "F.Cu" "F.Paste" "F.Mask"))))"#;
-    let options = KicadOptions { copper: KicadCopper::Mesh, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Mesh, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "mask.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -600,7 +675,7 @@ fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
     assert_eq!(find("Copper F.Cu pads").color, Some(COPPER_COLOR), "the pad's mask is open");
 
     // B-rep: the same split, the pad's copper keeping its colour through STEP.
-    let options = KicadOptions { copper: KicadCopper::Brep, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "mask.kicad_pcb", &options, &mut load).unwrap();
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
@@ -620,7 +695,7 @@ fn a_trace_stops_where_a_pads_copper_begins() {
       (footprint "test:SMD" (layer "F.Cu") (at 12 5)
         (property "Reference" "R1")
         (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu" "F.Mask"))))"#;
-    let options = KicadOptions { copper: KicadCopper::Mesh, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Mesh, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "joint.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -645,7 +720,7 @@ fn a_bare_pad_stands_above_the_masked_copper() {
       (footprint "test:SMD" (layer "F.Cu") (at 12 5)
         (property "Reference" "R1")
         (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu" "F.Mask"))))"#;
-    let options = KicadOptions { copper: KicadCopper::Mesh, pads: true, components: false, silkscreen: false, ..Default::default() };
+    let options = KicadOptions { copper: KicadCopper::Mesh, components: false, silkscreen: false, ..Default::default() };
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "proud.kicad_pcb", &options, &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };

@@ -312,7 +312,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
     } else {
         let mut keys: Vec<&str> = vec!["up", "names"];
         if solidcraft_engine::io::is_kicad_path(path) {
-            keys.extend(["thickness", "components", "copper", "pads", "silkscreen", "color", "representation", "mode"]);
+            keys.extend(["thickness", "components", "copper", "silkscreen", "color", "representation", "mode"]);
         }
         keys.iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect()
     };

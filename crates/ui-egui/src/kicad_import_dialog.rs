@@ -16,7 +16,6 @@ pub struct Dialog {
     pub path: String,
     pub components: bool,
     pub copper: KicadCopper,
-    pub pads: bool,
     pub silkscreen: bool,
     /// Use the board's own `general.thickness` (otherwise `thickness`).
     pub board_thickness: bool,
@@ -30,7 +29,6 @@ impl Dialog {
             path: path.to_string(),
             components: true,
             copper: KicadCopper::None,
-            pads: true,
             silkscreen: true,
             board_thickness: true,
             thickness: 1.6,
@@ -43,7 +41,6 @@ impl Dialog {
         let mut params = json!({
             "components": self.components,
             "copper": self.copper.as_str(),
-            "pads": self.pads,
             "silkscreen": self.silkscreen,
             "color": format!("#{:02x}{:02x}{:02x}", self.color[0], self.color[1], self.color[2]),
         });
@@ -105,12 +102,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                 });
-                ui.end_row();
-
-                let r =
-                    ui.add_enabled(dialog.copper != KicadCopper::None, egui::Checkbox::new(&mut dialog.pads, crate::i18n::tr_label("Include pads")));
-                crate::scenario::publish_handle("kicad:pads", r.rect.center());
-                ui.label(crate::i18n::tr_label("Pad copper is included with the copper layers"));
                 ui.end_row();
 
                 let r = ui.checkbox(&mut dialog.silkscreen, crate::i18n::tr_label("Silkscreen"));
@@ -179,13 +170,12 @@ mod tests {
         let mut d = Dialog::new("board.kicad_pcb");
         d.components = false;
         d.copper = KicadCopper::Overlay;
-        d.pads = false;
         d.silkscreen = false;
         d.color = [1, 2, 3];
         let p = d.params();
         assert_eq!(p["components"], json!(false));
         assert_eq!(p["copper"], json!("overlay"));
-        assert_eq!(p["pads"], json!(false));
+        assert!(p.get("pads").is_none(), "pads follow the copper option");
         assert_eq!(p["silkscreen"], json!(false));
         assert_eq!(p["color"], json!("#010203"));
         assert!(p.get("thickness").is_none());
@@ -246,18 +236,13 @@ mod tests {
         ] {
             assert!(h.widget(label).is_some(), "`{label}` is missing");
         }
-        // Pads belong to the copper, so they wait for a copper mode.
-        h.step(&json!({"click": {"handle": "kicad:pads"}})).unwrap();
-        h.frames(1);
-        assert_eq!(h.app.kicad_import.as_ref().map(|d| d.pads), Some(true));
-        h.step(&json!({"click": {"handle": "kicad:copper:mesh"}})).unwrap();
-        h.frames(1);
-        h.step(&json!({"click": {"handle": "kicad:pads"}})).unwrap();
+        h.frames(4);
+        h.step(&json!({"widget": "Modelled (mesh)"})).unwrap();
         h.frames(1);
         h.step(&json!({"click": {"handle": "kicad:silkscreen"}})).unwrap();
         h.frames(1);
         let d = h.app.kicad_import.as_ref().unwrap();
-        assert_eq!((d.copper, d.pads, d.silkscreen), (KicadCopper::Mesh, false, false), "{d:?}");
+        assert_eq!((d.copper, d.silkscreen), (KicadCopper::Mesh, false), "{d:?}");
         // Cancel leaves the design and the background queue alone.
         h.step(&json!({"click": {"handle": "kicad:cancel"}})).unwrap();
         h.frames(1);

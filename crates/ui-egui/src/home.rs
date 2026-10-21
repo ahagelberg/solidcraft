@@ -439,8 +439,7 @@ pub fn open_recent(app: &mut SolveApp, path: &str) {
         app.set_status(format!("{path} is no longer there"), true);
         return;
     }
-    app.home.open = false;
-    app.open_path_async(path);
+    app.open_chosen_file(path);
 }
 
 /// The page itself (in place of the toolbar, browser and viewport).
@@ -716,6 +715,23 @@ mod tests {
         open_recent(&mut h.app, "/disk/other/Bracket.solidcraft");
         assert_eq!(asked.borrow().len(), 1, "a file the host doesn't remember is not asked for");
         assert!(h.app.status.as_ref().is_some_and(|(text, _, error)| *error && text.contains("no longer there")));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn opening_a_recent_kicad_board_shows_its_import_settings() {
+        let path = std::env::temp_dir().join(format!("solidcraft-recent-{}.kicad_pcb", std::process::id()));
+        std::fs::write(&path, b"").unwrap();
+        let path = path.to_string_lossy().into_owned();
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = true;
+
+        open_recent(&mut h.app, &path);
+
+        assert!(!h.app.home.open);
+        assert_eq!(h.app.kicad_import.as_ref().map(|dialog| dialog.path.as_str()), Some(path.as_str()));
+        assert!(!h.app.file_load.busy(), "a recent KiCad board must wait for the import options");
+        std::fs::remove_file(path).unwrap();
     }
 
     /// Rebuild the shipped pictures from the authoritative sample command scripts.

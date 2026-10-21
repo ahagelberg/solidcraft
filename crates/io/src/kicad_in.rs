@@ -118,8 +118,6 @@ pub struct KicadOptions {
     pub components: bool,
     /// The front and back copper: left out, an overlay, or modelled with thickness.
     pub copper: KicadCopper,
-    /// Include pads in the copper (when it is not left out).
-    pub pads: bool,
     /// Build the front and back silkscreen.
     pub silkscreen: bool,
     /// Board substrate colour (`None`: [`DEFAULT_BOARD_COLOR`]).
@@ -134,7 +132,6 @@ impl Default for KicadOptions {
             thickness: None,
             components: true,
             copper: KicadCopper::None,
-            pads: true,
             silkscreen: true,
             color: None,
             representation: KicadRepresentation::Mesh,
@@ -219,10 +216,12 @@ pub struct KicadText {
 #[derive(Clone, Debug, PartialEq)]
 pub struct KicadModel {
     pub path: String,
-    /// Model-local translation in millimetres.
+    /// Model-local translation in millimetres (KiCad's legacy `at` token is in inches and is
+    /// converted when read).
     pub at: [f64; 3],
     pub scale: [f64; 3],
-    /// Model-local Euler rotation in degrees, applied about X, then Y, then Z.
+    /// Model-local Euler rotation in degrees, applied about X, then Y, then Z. KiCad measures it
+    /// in the board's Y-down frame, so it turns the other way in SolidCraft's Y-up world.
     pub rotate: [f64; 3],
 }
 
@@ -984,16 +983,16 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                     slots.insert(key, slot);
                     slot
                 };
-                plan.places.push(crate::PlanPlace { slot, parent: None, transform: footprint_place(footprint) });
+                plan.places.push(crate::PlanPlace { slot, parent: None, transform: footprint_place(footprint, back, thickness) });
             }
         }
     }
     let mut copper = None;
     report_import(3);
     if options.copper == KicadCopper::Brep {
-        copper = Some(copper_brep(&board, options.pads, thickness, &mut warnings)?);
+        copper = Some(copper_brep(&board, thickness, &mut warnings)?);
     } else if options.copper != KicadCopper::None {
-        for (mesh, name, color) in copper_meshes(&board, options.pads, thickness, options.copper, &mut warnings) {
+        for (mesh, name, color) in copper_meshes(&board, thickness, options.copper, &mut warnings) {
             meshes.push(mesh_data(name, mesh.positions, mesh.triangles, Some(color)));
             plan.bodies.push(None);
         }
@@ -1022,21 +1021,26 @@ fn component_name(footprint: &KicadFootprint, path: &str) -> String {
     if label.is_empty() { path.to_string() } else { label.to_string() }
 }
 
-/// A footprint's placement in the world (its own rotation; back-side models are baked).
-fn footprint_place(footprint: &KicadFootprint) -> Mat {
-    solidcraft_doc::rigid(Vec3::new(footprint.at[0], -footprint.at[1], 0.0), Vec3::ZERO, Vec3::Z, footprint.at[2].to_radians())
+/// Where a footprint's models sit in the world: the board position (KiCad's Y down to SolidCraft's
+/// Y up), the footprint's rotation, and the board face the model stands on — the top, or the bottom
+/// for a back-side footprint, whose model is then turned over by [`model_local_matrix`].
+fn footprint_place(footprint: &KicadFootprint, back: bool, thickness: f64) -> Mat {
+    let z = if back { 0.0 } else { thickness };
+    solidcraft_doc::rigid(Vec3::new(footprint.at[0], -footprint.at[1], z), Vec3::ZERO, Vec3::Z, footprint.at[2].to_radians())
 }
 
 /// A model's transform in the footprint's 3D frame: translation, a half turn about X on the
-/// back, the Euler rotation (X, then Y, then Z) and the scale.
+/// back, the Euler rotation (X, then Y, then Z) and the scale. KiCad measures the rotation in
+/// the board's Y-down frame, so each angle turns the other way in SolidCraft's Y-up frame; the
+/// offset is applied in the footprint's frame (before the back's half turn, after the rotation).
 fn model_local_matrix(model: &KicadModel, back: bool) -> Mat {
     let mut m = solidcraft_doc::rigid(Vec3::new(model.at[0], model.at[1], model.at[2]), Vec3::ZERO, Vec3::Z, 0.0);
     if back {
         m = solidcraft_doc::mat_mul(&m, &solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::X, std::f64::consts::PI));
     }
-    let rx = solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::X, model.rotate[0].to_radians());
-    let ry = solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::Y, model.rotate[1].to_radians());
-    let rz = solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::Z, model.rotate[2].to_radians());
+    let rx = solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::X, -model.rotate[0].to_radians());
+    let ry = solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::Y, -model.rotate[1].to_radians());
+    let rz = solidcraft_doc::rigid(Vec3::ZERO, Vec3::ZERO, Vec3::Z, -model.rotate[2].to_radians());
     m = solidcraft_doc::mat_mul(&m, &solidcraft_doc::mat_mul(&rz, &solidcraft_doc::mat_mul(&ry, &rx)));
     let mut scale = solidcraft_doc::IDENTITY;
     scale[0][0] = model.scale[0];
@@ -1867,7 +1871,7 @@ fn trim_around_drills(points: &[[f64; 2]], width: f64, drills: &[Vec<[f64; 2]>],
 
 /// Front and back copper plates: tracks, vias, pads and zones, modelled with their thickness or
 /// as a thin film overlaid on the board's surfaces.
-fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopper, warnings: &mut Vec<String>) -> Vec<(Plate, String, [f32; 3])> {
+fn copper_meshes(board: &KicadBoard, thickness: f64, mode: KicadCopper, warnings: &mut Vec<String>) -> Vec<(Plate, String, [f32; 3])> {
     let mut front = Plate::default();
     let mut back = Plate::default();
     // Pads whose mask is open: bare copper, a plate of their own so it can keep its colour.
@@ -1893,7 +1897,7 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
     // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill,
     // and at every pad, whose own copper (bare metal) takes over from its edge.
     let drills = drill_outlines(board);
-    let (pad_front, pad_back) = if pads { pad_outlines(board) } else { (Vec::new(), Vec::new()) };
+    let (pad_front, pad_back) = pad_outlines(board);
     for (front_side, width, points) in track_polylines(&board.tracks) {
         let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
         let plate = if front_side { &mut front } else { &mut back };
@@ -1935,32 +1939,30 @@ fn copper_meshes(board: &KicadBoard, pads: bool, thickness: f64, mode: KicadCopp
             Err(_) => warnings.push(format!("a copper zone on {} could not be built", zone.layer)),
         }
     }
-    if pads {
-        for footprint in &board.footprints {
-            let transform = footprint_world(footprint);
-            for pad in &footprint.pads {
-                let on_front = pad.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
-                let on_back = pad.layers.iter().any(|l| l == "B.Cu" || l == "*.Cu" || l == "F&B.Cu");
-                if !on_front && !on_back {
-                    continue;
+    for footprint in &board.footprints {
+        let transform = footprint_world(footprint);
+        for pad in &footprint.pads {
+            let on_front = pad.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
+            let on_back = pad.layers.iter().any(|l| l == "B.Cu" || l == "*.Cu" || l == "F&B.Cu");
+            if !on_front && !on_back {
+                continue;
+            }
+            let loops = pad_loops(pad);
+            // A through-hole pad's drill is a hole through its copper too.
+            let holes = pad_drill_holes(pad, &transform);
+            for loop_ in loops {
+                let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
+                if on_front {
+                    let exposed = mask_open(pad, "F.Mask");
+                    let plate = if exposed { &mut front_pads } else { &mut front };
+                    let (z0, z1) = if exposed { (top, bottom + PAD_PROUD) } else { (top, bottom) };
+                    add(plate, &|p| p.add_pad(&points, &holes, z0, z1));
                 }
-                let loops = pad_loops(pad);
-                // A through-hole pad's drill is a hole through its copper too.
-                let holes = pad_drill_holes(pad, &transform);
-                for loop_ in loops {
-                    let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
-                    if on_front {
-                        let exposed = mask_open(pad, "F.Mask");
-                        let plate = if exposed { &mut front_pads } else { &mut front };
-                        let (z0, z1) = if exposed { (top, bottom + PAD_PROUD) } else { (top, bottom) };
-                        add(plate, &|p| p.add_pad(&points, &holes, z0, z1));
-                    }
-                    if on_back {
-                        let exposed = mask_open(pad, "B.Mask");
-                        let plate = if exposed { &mut back_pads } else { &mut back };
-                        let (z0, z1) = if exposed { (under - PAD_PROUD, under_top) } else { (under, under_top) };
-                        add(plate, &|p| p.add_pad(&points, &holes, z0, z1));
-                    }
+                if on_back {
+                    let exposed = mask_open(pad, "B.Mask");
+                    let plate = if exposed { &mut back_pads } else { &mut back };
+                    let (z0, z1) = if exposed { (under - PAD_PROUD, under_top) } else { (under, under_top) };
+                    add(plate, &|p| p.add_pad(&points, &holes, z0, z1));
                 }
             }
         }
@@ -2060,7 +2062,7 @@ fn mask_open(pad: &KicadPad, layer: &str) -> bool {
 /// Front and back copper as B-rep solids with the copper's real thickness: one body per layer,
 /// whose pieces (tracks, vias, zones, pads, copper graphics and text) are its lumps. The copper
 /// comes back as STEP text, added as an import in the board's component.
-fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Vec<String>) -> Result<KicadCopperBrep> {
+fn copper_brep(board: &KicadBoard, thickness: f64, warnings: &mut Vec<String>) -> Result<KicadCopperBrep> {
     let (top, bottom, under, under_top) = (thickness, thickness + COPPER_THICKNESS, -COPPER_THICKNESS, 0.0);
     let mut front: Vec<Region2> = Vec::new();
     let mut back: Vec<Region2> = Vec::new();
@@ -2083,7 +2085,7 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
     // A routed trace is one item, however many legs KiCad stores it in; it stops at every drill,
     // and at every pad, whose own copper (bare metal) takes over from its edge.
     let drills = drill_outlines(board);
-    let (pad_front, pad_back) = if pads { pad_outlines(board) } else { (Vec::new(), Vec::new()) };
+    let (pad_front, pad_back) = pad_outlines(board);
     for (front_side, width, points) in track_polylines(&board.tracks) {
         let pads = if front_side { &pad_front } else { &pad_back };
         for run in trim_around_drills(&points, width, &drills, pads) {
@@ -2122,33 +2124,31 @@ fn copper_brep(board: &KicadBoard, pads: bool, thickness: f64, warnings: &mut Ve
         let regions = regions_from_loops(contours, None);
         push(if zone.layer == "F.Cu" { &mut front } else { &mut back }, regions);
     }
-    if pads {
-        for footprint in &board.footprints {
-            let transform = footprint_world(footprint);
-            for pad in &footprint.pads {
-                let on_front = pad.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
-                let on_back = pad.layers.iter().any(|l| l == "B.Cu" || l == "*.Cu" || l == "F&B.Cu");
-                if !on_front && !on_back {
-                    continue;
-                }
-                // A through-hole pad's drill is a hole through its copper too.
-                let holes = pad_drill_holes(pad, &transform);
-                let regions: Vec<Region2> = pad_loops(pad)
-                    .into_iter()
-                    .filter_map(|loop_| {
-                        let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
-                        let outer = clean_loop(&points)?;
-                        Some(Region2 { outer, holes: holes.clone() })
-                    })
-                    .collect();
-                if on_front {
-                    let exposed = mask_open(pad, "F.Mask");
-                    push(if exposed { &mut front_pads } else { &mut front }, regions.clone());
-                }
-                if on_back {
-                    let exposed = mask_open(pad, "B.Mask");
-                    push(if exposed { &mut back_pads } else { &mut back }, regions);
-                }
+    for footprint in &board.footprints {
+        let transform = footprint_world(footprint);
+        for pad in &footprint.pads {
+            let on_front = pad.layers.iter().any(|l| l == "F.Cu" || l == "*.Cu" || l == "F&B.Cu");
+            let on_back = pad.layers.iter().any(|l| l == "B.Cu" || l == "*.Cu" || l == "F&B.Cu");
+            if !on_front && !on_back {
+                continue;
+            }
+            // A through-hole pad's drill is a hole through its copper too.
+            let holes = pad_drill_holes(pad, &transform);
+            let regions: Vec<Region2> = pad_loops(pad)
+                .into_iter()
+                .filter_map(|loop_| {
+                    let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
+                    let outer = clean_loop(&points)?;
+                    Some(Region2 { outer, holes: holes.clone() })
+                })
+                .collect();
+            if on_front {
+                let exposed = mask_open(pad, "F.Mask");
+                push(if exposed { &mut front_pads } else { &mut front }, regions.clone());
+            }
+            if on_back {
+                let exposed = mask_open(pad, "B.Mask");
+                push(if exposed { &mut back_pads } else { &mut back }, regions);
             }
         }
     }
@@ -2709,21 +2709,36 @@ fn parse_text(expr: &Expr<'_>, text_index: usize) -> Option<KicadText> {
     Some(KicadText { text, at: [x, y, angle], layer, height, width, thickness, bold, italic, mirror, left, right, top, bottom })
 }
 
+/// A 3D model offset: KiCad writes `(offset (xyz ...))` in millimetres; the legacy
+/// `(at (xyz ...))` token it still reads is in inches.
+const LEGACY_MODEL_OFFSET_INCHES: f64 = 25.4;
+
 fn parse_model(expr: &Expr<'_>) -> std::result::Result<KicadModel, String> {
     let path = children(expr).get(1).and_then(atom).filter(|p| !p.trim().is_empty()).ok_or_else(|| "empty model path".to_string())?.to_string();
-    let at = model_xyz(expr, "at", [0.0; 3])?;
-    let scale = model_xyz(expr, "scale", [1.0; 3])?;
-    let rotate = model_xyz(expr, "rotate", [0.0; 3])?;
+    let at = match model_xyz(expr, "offset")? {
+        Some(offset) => offset,
+        None => match model_xyz(expr, "at")? {
+            Some(inches) => {
+                let mm = inches.map(|v| v * LEGACY_MODEL_OFFSET_INCHES);
+                if mm.iter().any(|v| !v.is_finite()) {
+                    return Err("invalid `at` vector".into());
+                }
+                mm
+            }
+            None => [0.0; 3],
+        },
+    };
+    let scale = model_xyz(expr, "scale")?.unwrap_or([1.0; 3]);
+    let rotate = model_xyz(expr, "rotate")?.unwrap_or([0.0; 3]);
     if scale.iter().any(|v| !v.is_finite() || *v <= 0.0) {
         return Err("invalid or mirrored model scale".into());
     }
     Ok(KicadModel { path, at, scale, rotate })
 }
 
-fn model_xyz(expr: &Expr<'_>, name: &str, default: [f64; 3]) -> std::result::Result<[f64; 3], String> {
-    // KiCad writes `(offset (xyz ...))` in some versions and `(at (xyz ...))` in others.
-    let vector = field(expr, name).or_else(|| if name == "at" { field(expr, "offset") } else { None });
-    let Some(vector) = vector else { return Ok(default) };
+/// The vector of a model's `offset`, `scale` or `rotate` token, if it has one.
+fn model_xyz(expr: &Expr<'_>, name: &str) -> std::result::Result<Option<[f64; 3]>, String> {
+    let Some(vector) = field(expr, name) else { return Ok(None) };
     let xyz = children(vector).get(1).filter(|e| head(e) == Some("xyz")).ok_or_else(|| format!("`{name}` must contain an xyz vector"))?;
     let values = numbers(xyz, 3)?;
     let result = [
@@ -2734,7 +2749,7 @@ fn model_xyz(expr: &Expr<'_>, name: &str, default: [f64; 3]) -> std::result::Res
     if result.iter().any(|v| !v.is_finite() || v.abs() > MAX_NUMBER) {
         return Err(format!("invalid `{name}` vector"));
     }
-    Ok(result)
+    Ok(Some(result))
 }
 
 fn property(expr: &Expr<'_>, key: &str) -> Option<String> {

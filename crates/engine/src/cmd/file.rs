@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"none\" (default: leave the traces out), \"overlay\" (a flat copper surface on the board), \"mesh\" (modelled with thickness; true also means mesh) or \"brep\" (exact solids with the copper's thickness, a STEP import in the board's component; false also means none); pads?: bool (default true, with copper); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (the board itself; B-rep is not supported yet)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component); version?: an older version of a design (1 is the first; the reply says which version opened and how many the file has); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"none\" (default: leave the traces out), \"overlay\" (a flat copper surface on the board), \"mesh\" (modelled with thickness; true also means mesh) or \"brep\" (exact solids with the copper's thickness, a STEP import in the board's component; false also means none; pads are included whenever copper is enabled); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (the board itself; B-rep is not supported yet)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -250,7 +250,7 @@ fn kicad_options(p: &Value, cmd: &str) -> Result<solidcraft_io::KicadOptions> {
         }
         options.thickness = Some(value);
     }
-    for (key, slot) in [("components", &mut options.components), ("pads", &mut options.pads), ("silkscreen", &mut options.silkscreen)] {
+    for (key, slot) in [("components", &mut options.components), ("silkscreen", &mut options.silkscreen)] {
         if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
             *slot = v.as_bool().ok_or_else(|| bad(cmd, format!("`{key}` must be true or false")))?;
         }
@@ -318,8 +318,9 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
     let bytes =
         solidcraft_io::vfs::read(&board_path, solidcraft_io::MAX_KICAD_BYTES).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
     let model_dir = std::path::Path::new(board_path.as_ref()).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let library_dir = installed_kicad_3dmodel_dir();
     let mut load = |model: &str| {
-        let resolved = resolve_kicad_model_path(model, &model_dir).map_err(|e| e.to_string())?;
+        let resolved = resolve_kicad_model_path(model, &model_dir, library_dir.as_deref()).map_err(|e| e.to_string())?;
         let limit = if solidcraft_io::is_vrml_path(&resolved) { solidcraft_io::MAX_VRML_BYTES } else { solidcraft_io::MAX_STEP_BYTES };
         solidcraft_io::vfs::read(&resolved, limit).map_err(|e| format!("{resolved}: {e}"))
     };
@@ -345,7 +346,7 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
     Ok(out)
 }
 
-fn resolve_kicad_model_path(path: &str, model_dir: &std::path::Path) -> std::io::Result<String> {
+fn resolve_kicad_model_path(path: &str, model_dir: &std::path::Path, library_dir: Option<&std::path::Path>) -> std::io::Result<String> {
     let mut expanded = String::with_capacity(path.len());
     let mut chars = path.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -377,10 +378,15 @@ fn resolve_kicad_model_path(path: &str, model_dir: &std::path::Path) -> std::io:
             if name == "KIPRJMOD" {
                 expanded.push_str(&model_dir.to_string_lossy());
             } else {
-                expanded.push_str(
-                    &std::env::var(&name)
-                        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, format!("unresolved environment variable `{name}`")))?,
-                );
+                expanded.push_str(&std::env::var(&name).or_else(|_| {
+                    if is_kicad_3dmodel_variable(&name) {
+                        library_dir.map(|dir| dir.to_string_lossy().into_owned()).ok_or_else(|| {
+                            std::io::Error::new(std::io::ErrorKind::NotFound, format!("KiCad 3D model library `{name}` was not found"))
+                        })
+                    } else {
+                        Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("unresolved environment variable `{name}`")))
+                    }
+                })?);
             }
         } else {
             expanded.push(ch);
@@ -389,6 +395,50 @@ fn resolve_kicad_model_path(path: &str, model_dir: &std::path::Path) -> std::io:
     let resolved = std::path::Path::new(&expanded);
     let resolved = if resolved.is_absolute() { resolved.to_path_buf() } else { model_dir.join(resolved) };
     Ok(resolved.to_string_lossy().into_owned())
+}
+
+fn is_kicad_3dmodel_variable(name: &str) -> bool {
+    if name == "KISYS3DMOD" {
+        return true;
+    }
+    name.strip_prefix("KICAD")
+        .and_then(|version| version.strip_suffix("_3DMODEL_DIR"))
+        .is_some_and(|version| !version.is_empty() && version.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn installed_kicad_3dmodel_dir() -> Option<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+            let Some(program_files) = std::env::var_os(variable) else { continue };
+            let install_root = std::path::PathBuf::from(program_files).join("KiCad");
+            let direct = install_root.join("share").join("kicad").join("3dmodels");
+            if direct.is_dir() {
+                candidates.push(((0_u32, 0_u32), direct));
+            }
+            let Ok(entries) = std::fs::read_dir(&install_root) else { continue };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let version_text = name.to_string_lossy();
+                let mut pieces = version_text.split('.').map(|piece| piece.parse::<u32>().unwrap_or(0));
+                let version = (pieces.next().unwrap_or(0), pieces.next().unwrap_or(0));
+                let models = entry.path().join("share").join("kicad").join("3dmodels");
+                if version.0 > 0 && models.is_dir() {
+                    candidates.push((version, models));
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    candidates.push(((0, 0), std::path::PathBuf::from("/Applications/KiCad/KiCad.app/Contents/SharedSupport/3dmodels")));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    candidates.extend([
+        ((0, 0), std::path::PathBuf::from("/usr/share/kicad/3dmodels")),
+        ((0, 0), std::path::PathBuf::from("/usr/local/share/kicad/3dmodels")),
+    ]);
+    candidates.sort_by_key(|(version, _)| *version);
+    candidates.into_iter().rev().map(|(_, path)| path).find(|path| path.is_dir())
 }
 
 fn read_kicad_env_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, delimiter: char) -> std::io::Result<String> {
@@ -910,6 +960,14 @@ mod urdf_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kicad_model_library_variables_resolve_from_the_installed_library() {
+        let board_dir = std::path::Path::new(r"C:\projects\board");
+        let library_dir = std::path::Path::new(r"C:\Program Files\KiCad\10.0\share\kicad\3dmodels");
+        let resolved = resolve_kicad_model_path("${KICAD9_3DMODEL_DIR}/Connector.3dshapes/part.step", board_dir, Some(library_dir)).unwrap();
+        assert_eq!(std::path::PathBuf::from(resolved), library_dir.join("Connector.3dshapes/part.step"));
+    }
 
     /// #3044: a save run on a scratch copy of the session (on a worker, so the window keeps
     /// drawing) and taken up with `adopt_save` leaves the session as saving it directly does:
