@@ -318,11 +318,10 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
     let bytes =
         solidcraft_io::vfs::read(&board_path, solidcraft_io::MAX_KICAD_BYTES).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
     let model_dir = std::path::Path::new(board_path.as_ref()).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
-    let library_dir = installed_kicad_3dmodel_dir();
+    let paths = KicadPaths::current();
     let mut load = |model: &str| {
-        let resolved = resolve_kicad_model_path(model, &model_dir, library_dir.as_deref()).map_err(|e| e.to_string())?;
-        let limit = if solidcraft_io::is_vrml_path(&resolved) { solidcraft_io::MAX_VRML_BYTES } else { solidcraft_io::MAX_STEP_BYTES };
-        solidcraft_io::vfs::read(&resolved, limit).map_err(|e| format!("{resolved}: {e}"))
+        let resolved = paths.resolve(model, &model_dir).map_err(|e| e.to_string())?;
+        read_kicad_model(&resolved).map_err(|e| format!("{resolved}: {e}"))
     };
     let imported =
         solidcraft_io::read_kicad(&bytes, &board_path, options, &mut load).map_err(|e| EngineError::Other(format!("{board_path}: {e}")))?;
@@ -346,55 +345,185 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
     Ok(out)
 }
 
-fn resolve_kicad_model_path(path: &str, model_dir: &std::path::Path, library_dir: Option<&std::path::Path>) -> std::io::Result<String> {
-    let mut expanded = String::with_capacity(path.len());
-    let mut chars = path.chars().peekable();
-    while let Some(ch) = chars.next() {
-        let name = match ch {
-            '$' if chars.peek() == Some(&'{') => {
-                chars.next();
-                Some(read_kicad_env_name(&mut chars, '}')?)
-            }
-            '%' => Some(read_kicad_env_name(&mut chars, '%')?),
-            '$' => {
-                let mut name = String::new();
-                while chars.peek().is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_') {
-                    if let Some(c) = chars.next() {
-                        name.push(c);
-                    }
+/// What a KiCad model reference's `${…}`/`%…%`/`$…` variables can resolve to on this machine.
+///
+/// The names are the board's, not ours: a board drawn in KiCad 8 says `${KICAD8_3DMODEL_DIR}`
+/// while KiCad 10 may be installed, so the version in a name decides nothing. A variable is
+/// looked up in the shell first (it wins), then in KiCad's own variable table (Preferences →
+/// Configure Paths, which is the only place KiCad defines them on Linux: it sets no environment
+/// variable), and any `KICAD<n>_3DMODEL_DIR`/`KISYS3DMOD` finally lands in the 3D library that is
+/// actually installed here.
+struct KicadPaths {
+    configured: Vec<(String, String)>,
+    library: Option<std::path::PathBuf>,
+}
+
+impl KicadPaths {
+    fn current() -> Self {
+        Self { configured: kicad_configured_variables(), library: installed_kicad_3dmodel_dir() }
+    }
+
+    fn get(&self, name: &str) -> Option<String> {
+        if let Ok(value) = std::env::var(name)
+            && !value.is_empty()
+        {
+            return Some(value);
+        }
+        if let Some((_, value)) = self.configured.iter().find(|(key, value)| key.eq_ignore_ascii_case(name) && !value.is_empty()) {
+            return Some(value.clone());
+        }
+        if is_kicad_3dmodel_variable(name) {
+            return self.library.as_ref().map(|dir| dir.to_string_lossy().into_owned());
+        }
+        None
+    }
+
+    fn resolve(&self, path: &str, model_dir: &std::path::Path) -> std::io::Result<String> {
+        let mut expanded = String::with_capacity(path.len());
+        let mut chars = path.chars().peekable();
+        while let Some(ch) = chars.next() {
+            let name = match ch {
+                '$' if chars.peek() == Some(&'{') => {
+                    chars.next();
+                    Some(read_kicad_env_name(&mut chars, '}')?)
                 }
+                '%' => Some(read_kicad_env_name(&mut chars, '%')?),
+                '$' => {
+                    let mut name = String::new();
+                    while chars.peek().is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_') {
+                        if let Some(c) = chars.next() {
+                            name.push(c);
+                        }
+                    }
+                    if name.is_empty() {
+                        expanded.push('$');
+                        continue;
+                    }
+                    Some(name)
+                }
+                _ => None,
+            };
+            if let Some(name) = name {
                 if name.is_empty() {
-                    expanded.push('$');
-                    continue;
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty environment variable in model path"));
                 }
-                Some(name)
-            }
-            _ => None,
-        };
-        if let Some(name) = name {
-            if name.is_empty() {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty environment variable in model path"));
-            }
-            if name == "KIPRJMOD" {
-                expanded.push_str(&model_dir.to_string_lossy());
+                if name == "KIPRJMOD" {
+                    expanded.push_str(&model_dir.to_string_lossy());
+                } else {
+                    expanded.push_str(
+                        &self
+                            .get(&name)
+                            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, format!("unresolved environment variable `{name}`")))?,
+                    );
+                }
             } else {
-                expanded.push_str(&std::env::var(&name).or_else(|_| {
-                    if is_kicad_3dmodel_variable(&name) {
-                        library_dir.map(|dir| dir.to_string_lossy().into_owned()).ok_or_else(|| {
-                            std::io::Error::new(std::io::ErrorKind::NotFound, format!("KiCad 3D model library `{name}` was not found"))
-                        })
-                    } else {
-                        Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("unresolved environment variable `{name}`")))
-                    }
-                })?);
+                expanded.push(ch);
             }
-        } else {
-            expanded.push(ch);
+        }
+        let resolved = std::path::Path::new(&expanded);
+        let resolved = if resolved.is_absolute() { resolved.to_path_buf() } else { model_dir.join(resolved) };
+        Ok(resolved.to_string_lossy().into_owned())
+    }
+}
+
+/// KiCad's own variable table — `environment.vars` in `kicad_common.json` — from the newest
+/// KiCad configured here: `~/.config/kicad/<version>` on Linux (`$XDG_CONFIG_HOME` when set),
+/// `%APPDATA%\kicad\<version>` on Windows, `~/Library/Preferences/kicad/<version>` on macOS.
+fn kicad_configured_variables() -> Vec<(String, String)> {
+    let mut roots = Vec::new();
+    #[cfg(target_os = "windows")]
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        roots.push(std::path::PathBuf::from(app_data).join("kicad"));
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(std::path::PathBuf::from(home).join("Library").join("Preferences").join("kicad"));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(config) = std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+            roots.push(std::path::PathBuf::from(config).join("kicad"));
+        } else if let Some(home) = std::env::var_os("HOME") {
+            roots.push(std::path::PathBuf::from(home).join(".config").join("kicad"));
         }
     }
-    let resolved = std::path::Path::new(&expanded);
-    let resolved = if resolved.is_absolute() { resolved.to_path_buf() } else { model_dir.join(resolved) };
-    Ok(resolved.to_string_lossy().into_owned())
+    for root in roots {
+        // The newest configured version is the one whose paths apply; older ones are kept as a
+        // fallback for a variable the newest no longer defines.
+        let mut versions: Vec<(u32, u32, std::path::PathBuf)> = std::fs::read_dir(&root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let mut pieces = name.split('.').map(|piece| piece.parse::<u32>().unwrap_or(u32::MAX));
+                let version = (pieces.next()?, pieces.next().unwrap_or(0));
+                (version.0 != u32::MAX && entry.path().is_dir()).then(|| (version.0, version.1, entry.path()))
+            })
+            .collect();
+        versions.sort_by_key(|a| std::cmp::Reverse((a.0, a.1)));
+        versions.push((0, 0, root));
+        let mut variables: Vec<(String, String)> = Vec::new();
+        for (_, _, dir) in versions {
+            let Ok(bytes) = solidcraft_io::vfs::read(&dir.join("kicad_common.json").to_string_lossy(), 16 << 20) else { continue };
+            for (key, value) in kicad_variables_of(&bytes) {
+                if !variables.iter().any(|(name, _)| name.eq_ignore_ascii_case(&key)) {
+                    variables.push((key, value));
+                }
+            }
+        }
+        if !variables.is_empty() {
+            return variables;
+        }
+    }
+    Vec::new()
+}
+
+/// The `environment.vars` table of a `kicad_common.json`, as text. Anything unexpected in the
+/// file (a missing table, a number or `null` where a path belongs) simply is not a variable.
+fn kicad_variables_of(bytes: &[u8]) -> Vec<(String, String)> {
+    let Ok(json) = serde_json::from_slice::<Value>(bytes) else { return Vec::new() };
+    let Some(vars) = json.get("environment").and_then(|e| e.get("vars")).and_then(Value::as_object) else { return Vec::new() };
+    vars.iter()
+        .filter_map(|(name, value)| value.as_str().filter(|text| !text.is_empty()).map(|text| (name.clone(), text.to_string())))
+        .take(256)
+        .collect()
+}
+
+/// Read a footprint's model. KiCad's 3D library ships each model in one format at a time — the
+/// KiCad 10 packages have no VRML at all, while a board drawn with older footprints still names
+/// `….wrl` — so a reference to a file that is not here is answered by the model of the same name
+/// in another format we can read, which is what KiCad's own 3D viewer does.
+fn read_kicad_model(path: &str) -> std::io::Result<solidcraft_io::KicadModelFile> {
+    let named = std::path::Path::new(path);
+    let missing = match read_kicad_model_file(named) {
+        Ok(bytes) => return Ok(solidcraft_io::KicadModelFile { path: path.to_string(), bytes }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => error,
+        Err(error) => return Err(error),
+    };
+    let Some(stem) = named.file_stem() else { return Err(missing) };
+    let Some(dir) = named.parent() else { return Err(missing) };
+    let format = named.extension().and_then(|e| e.to_str()).unwrap_or("");
+    for other in ["step", "stp", "wrl"] {
+        if other.eq_ignore_ascii_case(format) {
+            continue;
+        }
+        // Not `with_extension`: a model named `DIP-14_W7.62mm` has `62mm` as its extension.
+        let mut name = stem.to_os_string();
+        name.push(".");
+        name.push(other);
+        let candidate = dir.join(name);
+        if let Ok(bytes) = read_kicad_model_file(&candidate) {
+            return Ok(solidcraft_io::KicadModelFile { path: candidate.to_string_lossy().into_owned(), bytes });
+        }
+    }
+    Err(missing)
+}
+
+fn read_kicad_model_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    let text = path.to_string_lossy();
+    let limit = if solidcraft_io::is_vrml_path(&text) { solidcraft_io::MAX_VRML_BYTES } else { solidcraft_io::MAX_STEP_BYTES };
+    solidcraft_io::vfs::read(&text, limit)
 }
 
 fn is_kicad_3dmodel_variable(name: &str) -> bool {
@@ -963,10 +1092,44 @@ mod tests {
 
     #[test]
     fn kicad_model_library_variables_resolve_from_the_installed_library() {
-        let board_dir = std::path::Path::new(r"C:\projects\board");
-        let library_dir = std::path::Path::new(r"C:\Program Files\KiCad\10.0\share\kicad\3dmodels");
-        let resolved = resolve_kicad_model_path("${KICAD9_3DMODEL_DIR}/Connector.3dshapes/part.step", board_dir, Some(library_dir)).unwrap();
+        // Absolute on every platform the test runs on: a Windows path is not absolute elsewhere.
+        let library_dir = if cfg!(windows) {
+            std::path::Path::new(r"C:\Program Files\KiCad\10.0\share\kicad\3dmodels")
+        } else {
+            std::path::Path::new("/usr/share/kicad/3dmodels")
+        };
+        let board_dir = library_dir.parent().unwrap_or(library_dir);
+        let paths = KicadPaths { configured: Vec::new(), library: Some(library_dir.to_path_buf()) };
+        // The board names KiCad 8's variable; KiCad 10 is what is installed, and that is where the
+        // model is: the version in the name never decides.
+        let resolved = paths.resolve("${KICAD8_3DMODEL_DIR}/Connector.3dshapes/part.step", board_dir).unwrap();
         assert_eq!(std::path::PathBuf::from(resolved), library_dir.join("Connector.3dshapes/part.step"));
+    }
+
+    #[test]
+    fn kicad_paths_come_from_kicads_own_variable_table() {
+        let common = br#"{"environment": {"vars": {"KICAD10_3DMODEL_DIR": "/opt/kicad/3dmodels", "CUSTOM": "/parts", "UNSET": null}}}"#;
+        let variables = kicad_variables_of(common);
+        assert!(variables.contains(&("KICAD10_3DMODEL_DIR".to_string(), "/opt/kicad/3dmodels".to_string())), "{variables:?}");
+        let paths = KicadPaths { configured: variables, library: None };
+        assert_eq!(paths.resolve("${CUSTOM}/part.step", std::path::Path::new("/b")).unwrap(), "/parts/part.step");
+        assert!(paths.get("UNSET").is_none(), "a null path is not a path");
+        assert!(paths.get("NOT_THERE").is_none());
+        assert!(kicad_variables_of(b"not json").is_empty());
+    }
+
+    #[test]
+    fn a_missing_vrml_model_is_read_from_its_step_twin() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-kicad-model-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let step = dir.join("DIP-14_W7.62mm.step");
+        std::fs::write(&step, "ISO-10303-21;").unwrap();
+        let found = read_kicad_model(&dir.join("DIP-14_W7.62mm.wrl").to_string_lossy()).expect("the STEP twin is used");
+        assert_eq!(std::path::PathBuf::from(&found.path), step, "KiCad 10's library has no VRML, only STEP");
+        assert_eq!(found.bytes, b"ISO-10303-21;");
+        let _ = std::fs::remove_file(&step);
+        assert!(read_kicad_model(&dir.join("DIP-14_W7.62mm.wrl").to_string_lossy()).is_err(), "nothing to fall back to");
+        let _ = std::fs::remove_dir(&dir);
     }
 
     /// #3044: a save run on a scratch copy of the session (on a worker, so the window keeps

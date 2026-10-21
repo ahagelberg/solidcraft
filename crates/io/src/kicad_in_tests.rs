@@ -282,10 +282,12 @@ fn vrml_models_are_read_and_placed() {
       (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
       (footprint "part" (at 5 5) (layer "F.Cu") (property "Reference" "U1")
         (model "part.wrl" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0)))))"#;
-    let mut load = |_: &str| {
-        Ok(br#"#VRML V2.0 utf8
-      Shape { geometry Box { size 2 2 2 } }"#
-            .to_vec())
+    let mut load = |path: &str| {
+        Ok(KicadModelFile {
+            path: path.to_string(),
+            bytes: br#"#VRML V2.0 utf8
+      Shape { geometry Box { size 2 2 2 } }"#.to_vec(),
+        })
     };
     let imported = read_kicad(source.as_bytes(), "board.kicad_pcb", &KicadOptions::default(), &mut load).unwrap();
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = imported.feature.kind else { panic!("expected a mesh import") };
@@ -405,8 +407,14 @@ fn trace_into_a_via_stops_at_its_drill() {
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "via.kicad_pcb", &options, &mut load).unwrap();
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
-    let front = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("front copper");
-    let area = solidcraft_kernel::measure(&front.body).expect("bounds").volume / 0.035;
+    // The via's copper and the trace overlap, so the copper layer is several solids, not one
+    // with a void: their areas add up.
+    let area: f64 = imp
+        .bodies
+        .iter()
+        .filter(|b| b.name == "Copper F.Cu")
+        .map(|b| solidcraft_kernel::measure(&b.body).expect("bounds").volume / 0.035)
+        .sum();
     // The via's ring plus the trace from 10.5 (its 0.3 drill plus half the 0.4 stroke) to 16:
     // nothing over the hole, not even the stroke's corner.
     let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3) + 5.5 * 0.4;
@@ -423,8 +431,12 @@ fn a_trace_crossing_a_hole_is_cut_at_the_hole() {
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "via.kicad_pcb", &options, &mut load).unwrap();
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
-    let front = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("front copper");
-    let area = solidcraft_kernel::measure(&front.body).expect("bounds").volume / 0.035;
+    let area: f64 = imp
+        .bodies
+        .iter()
+        .filter(|b| b.name == "Copper F.Cu")
+        .map(|b| solidcraft_kernel::measure(&b.body).expect("bounds").volume / 0.035)
+        .sum();
     // The ring plus the trace on either side of the hole (6 → 9.5 and 10.5 → 14).
     let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3) + 2.0 * 3.5 * 0.4;
     assert!((area - expected).abs() < 0.03, "{area} vs {expected}");
@@ -793,3 +805,4 @@ fn a_pad_opens_up_for_any_hole_it_covers() {
     let expected = 9.0 - std::f64::consts::PI * 0.3 * 0.3;
     assert!((area - expected).abs() < 0.05, "{area} vs {expected}");
 }
+

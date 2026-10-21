@@ -290,8 +290,18 @@ pub struct KicadImport {
     pub copper: Option<KicadCopperBrep>,
 }
 
+/// A model file a loader found for a footprint's reference (`(model "…")`): the reference can
+/// name a file this machine does not have — KiCad 10's 3D library ships STEP only, while a board
+/// drawn with older footprints names `….wrl` — so the loader reports the file it read and the
+/// format follows that path, not the reference.
+pub struct KicadModelFile {
+    /// The file the bytes came from.
+    pub path: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Load a KiCad model reference. The engine resolves project and environment paths.
-pub type KicadLoader<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<Vec<u8>, String>;
+pub type KicadLoader<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<KicadModelFile, String>;
 
 /// Is this a KiCad project (`.kicad_pro`) or PCB (`.kicad_pcb`) path, any case?
 pub fn is_kicad_path(path: &str) -> bool {
@@ -891,20 +901,24 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                 let slot = if let Some(slot) = slots.get(&key).copied() {
                     slot
                 } else {
-                    let model_bytes = match load(&model.path) {
-                        Ok(bytes) => bytes,
+                    let file = match load(&model.path) {
+                        Ok(file) => file,
                         Err(reason) => {
                             warnings.push(format!("{}: {reason}", model.path));
                             continue;
                         }
                     };
-                    let (imported_meshes, reason) = if ext.eq_ignore_ascii_case("wrl") {
+                    let KicadModelFile { path: model_path, bytes: model_bytes } = file;
+                    // The format follows the file that was read, not the reference: a board can
+                    // name a `….wrl` that the library installed here only has as a `….step`.
+                    let format = Path::new(&model_path).extension().and_then(|e| e.to_str()).unwrap_or("");
+                    let (imported_meshes, reason) = if format.eq_ignore_ascii_case("wrl") {
                         if model_bytes.len() > crate::MAX_VRML_BYTES {
                             (Vec::new(), Some("model file exceeds the VRML size limit".to_string()))
                         } else {
-                            match crate::vrml_in::read_vrml(&model_bytes, &model.path) {
+                            match crate::vrml_in::read_vrml(&model_bytes, &model_path) {
                                 Ok(m) => {
-                                    warnings.extend(m.warnings.iter().map(|w| format!("{}: {w}", model.path)));
+                                    warnings.extend(m.warnings.iter().map(|w| format!("{model_path}: {w}")));
                                     match solidcraft_kernel::mesh_body(&m.positions, &m.triangles) {
                                         Ok(_) => (vec![mesh_data(component_name(footprint, &model.path), m.positions, m.triangles, m.color)], None),
                                         Err(e) => (Vec::new(), Some(e.to_string())),
@@ -950,11 +964,11 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                         }
                     };
                     if let Some(reason) = reason {
-                        warnings.push(format!("{}: {reason}", model.path));
+                        warnings.push(format!("{model_path}: {reason}"));
                         continue;
                     }
                     if imported_meshes.is_empty() {
-                        warnings.push(format!("{}: no solid bodies found", model.path));
+                        warnings.push(format!("{model_path}: no solid bodies found"));
                         continue;
                     }
                     let slot = plan.slots.len();
@@ -978,7 +992,7 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                         placed.push(mesh_data(mesh.name, positions, triangles, mesh.color));
                     }
                     if let Some(reason) = failed {
-                        warnings.push(format!("{}: {reason}", model.path));
+                        warnings.push(format!("{model_path}: {reason}"));
                         continue;
                     }
                     for mesh in placed {
