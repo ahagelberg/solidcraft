@@ -1104,7 +1104,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 // Only the family's default pin follows the part's choice. Explicitly pinned
                 // variants remain exact commands, including in customised toolbars.
                 let family = crate::sketch_families::family(c.id).filter(|f| sketch_create && f.commands.first().copied() == Some(c.id));
-                let selected = family.and_then(|f| app.sketch_choices.selected(f)).unwrap_or(c);
+                let selected = family.and_then(|f| app.preferences.sketch_variants.selected(f)).unwrap_or(c);
                 let whole = Rect::from_min_size(pos2(button_x, top + 2.0), vec2(button_width, BUTTON_HEIGHT));
                 button_x += button_width + BUTTON_GAP;
                 let mut br = whole;
@@ -1474,12 +1474,8 @@ fn assistant_button(app: &mut SolveApp, ui: &mut egui::Ui, at: Rect) {
             ui.painter().circle_filled(c, 4.0, color);
         }
         AssistantMark::Busy => {
-            let phase = if app.preferences.look_at_anim {
-                ui.ctx().request_repaint();
-                ui.input(|i| i.time) as f32 * 3.0
-            } else {
-                0.0
-            };
+            ui.ctx().request_repaint();
+            let phase = ui.input(|i| i.time) as f32 * 3.0;
             ui.painter().circle_filled(c, 6.0, ring);
             let points = (0..=24)
                 .map(|i| {
@@ -1814,6 +1810,11 @@ pub const ESCAPE_TWICE_S: f64 = 0.4;
 
 /// Global keyboard shortcuts (when no text field has focus).
 pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
+    if design_shown(app) {
+        crate::navigation::step_key_hold(app, ctx);
+    } else {
+        app.viewport.key_hold = None;
+    }
     if app.file_load.busy() {
         return;
     }
@@ -1827,8 +1828,11 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let (keys, mods) = ctx.input(|i| {
-        let keys: Vec<egui::Key> =
-            i.events.iter().filter_map(|e| if let egui::Event::Key { key, pressed: true, .. } = e { Some(*key) } else { None }).collect();
+        let keys: Vec<(egui::Key, bool)> = i
+            .events
+            .iter()
+            .filter_map(|e| if let egui::Event::Key { key, pressed: true, repeat, .. } = e { Some((*key, *repeat)) } else { None })
+            .collect();
         (keys, i.modifiers)
     });
     // Home hides the design: only New, Open and Preferences work there.
@@ -1838,13 +1842,13 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::edit_clipboard::flush(ctx);
     }
-    for k in keys {
+    for (k, repeat) in keys {
         use egui::Key;
         // Only Esc pressed twice in a row finishes a sketch: any other key in between resets it.
         if k != Key::Escape {
             app.last_escape = None;
         }
-        if shown && crate::navigation::view_key(app, ctx, k, mods) {
+        if shown && crate::navigation::view_key(app, ctx, k, mods, repeat) {
             continue;
         }
         if mods.command {

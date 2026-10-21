@@ -483,6 +483,30 @@ fn two_tangent_circle_from_a_click_on_a_curve_leaves_the_curves_as_drawn() {
     }
 }
 
+/// #3099: a centre circle drawn through a point stays on it. Centred on a line's midpoint and
+/// through its end, the circle's radius follows the line when the line is dimensioned.
+#[test]
+fn centre_circle_through_a_point_keeps_it_on_the_circle() {
+    let mut s = new_sketch();
+    let l = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 30], [40, 30]]}))["curves"])[0].clone();
+    let r = run(&mut s, "sketch.circle.center", json!({"center": format!("mid:{l}"), "radius": 20, "through": format!("{l}.end")}));
+    let c = ids(&r["curves"])[0].clone();
+    let sk = sketch(&s);
+    let (li, ci) = (sk.curve_index(&l).unwrap(), sk.curve_index(&c).unwrap());
+    let end = sk.resolve_point(&format!("{l}.end")).unwrap();
+    assert!(sk.constraints.iter().any(|k| k.kind == ConstraintKind::PointOnCurve { p: end, c: ci }), "{:?}", sk.constraints);
+    run(&mut s, "sketch.dimension", json!({"entities": [l], "value": 60}));
+    let sk = sketch(&s);
+    let line = sk.shape(li).unwrap();
+    let solidcraft_sketch::Shape::Line { a, b } = line else { panic!("{line:?}") };
+    assert!(close(a.dist(b), 60.0));
+    assert!(close(sk.radius(ci).unwrap(), 30.0), "the circle followed the line's end: {:?}", sk.radius(ci));
+    // Through a plain position: nothing to keep it on.
+    let r = run(&mut s, "sketch.circle.center", json!({"center": [100, 0], "radius": 5, "through": [105, 0]}));
+    let ci = sketch(&s).curve_index(&ids(&r["curves"])[0]).unwrap();
+    assert!(!sketch(&s).constraints.iter().any(|k| matches!(k.kind, ConstraintKind::PointOnCurve { c, .. } if c == ci)));
+}
+
 #[test]
 fn ellipse_splines_conic() {
     let pi = std::f64::consts::PI;

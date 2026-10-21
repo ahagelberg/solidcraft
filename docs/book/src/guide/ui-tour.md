@@ -171,9 +171,10 @@ Imported themes are kept with your preferences, so they work in the browser app 
 vision modes still apply on top of any theme.
 
 Navigation › **Smooth wheel zoom** is on by default. Turn it off to apply each wheel or
-trackpad event immediately, with no smoothing tail. It is independent of **Animate view
-changes**, which controls axis views, Look At, Home and Fit. Re-enabling smoothing during
+trackpad event immediately, with no smoothing tail. Re-enabling smoothing during
 a wheel gesture takes effect after that gesture ends, avoiding leftover zoom being replayed.
+Every other view change (axis view, view cube, Look At, Home, Fit, named views, arrow keys)
+and every orbit, pan and zoom drag applies at once, with no animation.
 
 Navigation › **Alias** uses Alias's camera keys: Shift+Alt+left drag orbits, Shift+Alt+middle
 drag pans and Shift+Alt+right drag zooms (drag down to move away, up to move closer). Without

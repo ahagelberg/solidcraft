@@ -245,7 +245,7 @@ use std::sync::mpsc::Receiver;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
-use solidcraft_engine::render::{Camera, CameraAnim, StandardView};
+use solidcraft_engine::render::{Camera, StandardView};
 
 pub use control::{ControlRequest, ControlResponse};
 
@@ -367,8 +367,6 @@ pub struct SolveApp {
     pub ui: UiState,
     pub(crate) shell: shell::State,
     pub cam: Camera,
-    /// A view change in progress (axis view, Home, Fit); any mouse navigation cancels it.
-    pub cam_anim: Option<CameraAnim>,
     /// Seconds since start, as of this frame.
     pub now: f64,
     /// The view before the current sketch started (Finish Sketch returns to it).
@@ -417,7 +415,6 @@ pub struct SolveApp {
     pub install_steps: Option<install::Steps>,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
-    pub sketch_choices: sketch_families::Choices,
     /// Preferences kept between runs, and their window.
     pub preferences: prefs::Prefs,
     pub prefs_window: prefs::PrefsWindow,
@@ -528,6 +525,8 @@ pub struct SolveApp {
     applied_fonts_language: String,
     /// The interface font the fonts were last set up with (`Prefs::ui_font`).
     applied_ui_font: String,
+    /// The fonts installed include the system's fallback faces.
+    applied_system_fonts: bool,
 }
 
 impl SolveApp {
@@ -546,7 +545,6 @@ impl SolveApp {
             ui: UiState::default(),
             shell: Default::default(),
             cam: Camera::default(),
-            cam_anim: None,
             now: 0.0,
             pre_sketch_cam: None,
             pre_sketch_marker: None,
@@ -574,7 +572,6 @@ impl SolveApp {
             updater: update::Updater::default(),
             install_steps: None,
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
-            sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
             prefs_window: prefs::PrefsWindow::default(),
             slicer_menu: dialogs_save_mesh::SlicerMenu::default(),
@@ -634,6 +631,7 @@ impl SolveApp {
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
             applied_ui_font: String::new(),
+            applied_system_fonts: false,
         }
     }
 
@@ -828,7 +826,6 @@ impl SolveApp {
                 }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
-                    self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
                     self.menu.props = None;
                     sketch_attachment_ui::clear(self);
@@ -980,7 +977,7 @@ impl SolveApp {
             return;
         }
         if solidcraft_engine::find_command(id).is_some_and(|c| c.info(&self.session).enabled) {
-            self.sketch_choices.remember(id);
+            self.preferences.sketch_variants.remember(id);
         }
         if id == "parameters.change" {
             params_dialog::open(self);
@@ -1280,7 +1277,6 @@ impl SolveApp {
     /// (home) and frames the model.
     pub fn set_up_axis(&mut self, up: solidcraft_engine::render::UpAxis) {
         self.ui.up_axis = up;
-        self.cam_anim = None;
         self.cam.up = up;
         self.cam.set_view(StandardView::Iso);
         self.fit_view();
@@ -1300,8 +1296,6 @@ impl SolveApp {
             }
             return;
         }
-        self.cam_anim = None;
-        self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
         let bounds = viewport::view_bounds(self);
         self.pending_fit = Some((self.cam, bounds, false));
@@ -1311,7 +1305,6 @@ impl SolveApp {
     /// Frame `bounds` at once, keeping the view direction (programmatic use).
     pub fn fit_bounds(&mut self, bounds: solidcraft_engine::geom::Aabb3) {
         self.cancel_view_animation();
-        self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
         self.pending_fit = Some((self.cam, bounds, false));
         self.cam = self.fitted_bounds(self.cam, &bounds);
@@ -1348,32 +1341,19 @@ impl SolveApp {
                 self.animate_to(to);
             } else {
                 self.cam = to;
-                self.cam_anim = None;
             }
             ctx.request_repaint();
         }
     }
 
-    /// Move the camera to `to` over half a second (ease in-out, orientation slerped).
+    /// Move the camera to `to` at once. Views never animate: nothing is left running that a
+    /// later mouse orbit, pan or zoom could lag behind.
     pub fn animate_to(&mut self, to: Camera) {
         self.pending_fit = None;
-        self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
-        if !to.is_valid() {
-            return;
-        }
-        // Preferences › Navigation: animated (at a chosen speed) or immediate.
-        if !self.preferences.look_at_anim {
+        if to.is_valid() {
             self.cam = to;
-            self.cam_anim = None;
-            return;
         }
-        let mut anim = CameraAnim::new(self.cam, to, self.now);
-        let speed = f64::from(self.preferences.look_at_speed);
-        if speed.is_finite() && speed > 0.0 {
-            anim.duration /= speed;
-        }
-        self.cam_anim = Some(anim);
     }
 
     /// Frame everything shown, keeping the orientation (animated; the selection is ignored).
@@ -1450,36 +1430,22 @@ impl SolveApp {
             self.animate_to(to);
         } else if to.is_valid() {
             self.cancel_view_animation();
-            self.viewport.orbit_snap = None;
             self.viewport.orbit_free = None;
             self.cam = to;
         }
     }
 
-    /// Stop any view animation where it is (the user took over the camera).
+    /// Drop a pending refit (the user took over the camera).
     pub fn cancel_view_animation(&mut self) {
         self.pending_fit = None;
-        self.cam_anim = None;
     }
 
     /// Hand the view to an external navigation device without a pending mouse orbit or spin
     /// immediately taking it back on the next frame.
     pub fn begin_external_navigation(&mut self) {
         self.cancel_view_animation();
-        self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
         self.viewport.spin = false;
-    }
-
-    fn step_view_animation(&mut self, ctx: &egui::Context) {
-        let Some(anim) = self.cam_anim else { return };
-        let (cam, done) = anim.sample(self.now);
-        self.cam = if cam.is_valid() { cam } else { anim.to };
-        if done {
-            self.cam_anim = None;
-        } else {
-            ctx.request_repaint();
-        }
     }
 
     /// Per-frame logic before layout.
@@ -1511,7 +1477,6 @@ impl SolveApp {
         if self.cam.up != self.ui.up_axis {
             self.set_up_axis(self.ui.up_axis);
         }
-        self.step_view_animation(ctx);
         self.poll_control_jobs(ctx);
         self.drain_control(ctx);
         self.follow_view_request(true);
@@ -1580,10 +1545,18 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
-        if self.preferences.language != self.applied_fonts_language || self.preferences.ui_font != self.applied_ui_font {
+        // The first frames draw with the bundled faces while the system's CJK, Hangul and Thai
+        // faces are read on a thread; the fonts are installed again once they are there.
+        crate::fonts::load_system_fonts_in_background(ui.ctx());
+        let system_fonts = crate::fonts::system_fonts_ready();
+        if self.preferences.language != self.applied_fonts_language
+            || self.preferences.ui_font != self.applied_ui_font
+            || (system_fonts && !self.applied_system_fonts)
+        {
             self.applied_fonts_language.clone_from(&self.preferences.language);
             self.applied_ui_font.clone_from(&self.preferences.ui_font);
-            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language, &self.preferences.ui_font);
+            self.applied_system_fonts = system_fonts;
+            crate::fonts::setup_fonts_without_waiting(ui.ctx(), &self.preferences.language, &self.preferences.ui_font);
         }
         let _language = crate::i18n::scope(&self.preferences.language);
         let mut report_input = None;
