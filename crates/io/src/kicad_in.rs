@@ -923,20 +923,25 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                                     let mut out = Vec::new();
                                     let mut failed = None;
                                     for body in &imported.bodies {
-                                        let mesh = match body.body.tessellate(0.1) {
-                                            Ok(mesh) => mesh,
+                                        let parts = match model_body_meshes(&body.name, &body.body, body.color) {
+                                            Ok(parts) => parts,
                                             Err(error) => {
                                                 failed = Some(error.to_string());
                                                 break;
                                             }
                                         };
-                                        totals.0 = totals.0.saturating_add(mesh.positions.len());
-                                        totals.1 = totals.1.saturating_add(mesh.triangles.len());
-                                        if totals.0 > MAX_MODEL_VERTICES || totals.1 > MAX_MODEL_TRIANGLES {
-                                            failed = Some("KiCad model geometry exceeds the import limits".into());
+                                        for mesh in parts {
+                                            totals.0 = totals.0.saturating_add(mesh.positions.len());
+                                            totals.1 = totals.1.saturating_add(mesh.triangles.len());
+                                            if totals.0 > MAX_MODEL_VERTICES || totals.1 > MAX_MODEL_TRIANGLES {
+                                                failed = Some("KiCad model geometry exceeds the import limits".into());
+                                                break;
+                                            }
+                                            out.push(mesh);
+                                        }
+                                        if failed.is_some() {
                                             break;
                                         }
-                                        out.push(mesh_data(body.name.clone(), mesh.positions, mesh.triangles, body.color));
                                     }
                                     (out, failed)
                                 }
@@ -1056,6 +1061,67 @@ fn mesh_data(name: String, positions: Vec<Vec3>, triangles: Vec<[u32; 3]>, color
         triangles: triangles.into_iter().flatten().collect(),
         color,
     }
+}
+
+/// A STEP model body as meshes, one per colour it carries: a package's plastic, pins and pads
+/// have colours of their own (`body.color` is the body-wide style, often absent), and a mesh body
+/// shows only one colour. A body without per-face colours stays a single mesh.
+fn model_body_meshes(name: &str, body: &solidcraft_kernel::Body, color: Option<[f32; 3]>) -> Result<Vec<solidcraft_doc::MeshData>> {
+    let mesh = body.tessellate(0.1).map_err(|e| IoError::Invalid(format!("KiCad model: {e}")))?;
+    let painted: HashMap<usize, [f32; 3]> = body.paint().map(|p| p.faces.iter().map(|f| (f.face, f.color)).collect()).unwrap_or_default();
+    let same = |a: Option<[f32; 3]>, b: Option<[f32; 3]>| match (a, b) {
+        (Some(a), Some(b)) => a.iter().zip(b.iter()).all(|(x, y)| x.to_bits() == y.to_bits()),
+        (None, None) => true,
+        _ => false,
+    };
+    // The colours in the order they first appear, each with its triangles.
+    let mut colors: Vec<(Option<[f32; 3]>, Vec<usize>)> = Vec::new();
+    for i in 0..mesh.triangles.len() {
+        let color = mesh.tri_face.get(i).copied().and_then(|face| painted.get(&(face as usize)).copied()).or(color);
+        match colors.iter_mut().find(|(c, _)| same(*c, color)) {
+            Some((_, tris)) => tris.push(i),
+            None => colors.push((color, vec![i])),
+        }
+    }
+    let mut out = Vec::with_capacity(colors.len());
+    for (n, (color, tris)) in colors.iter().enumerate() {
+        let mut remap: HashMap<u32, u32> = HashMap::new();
+        let mut positions: Vec<Vec3> = Vec::new();
+        let mut triangles: Vec<u32> = Vec::with_capacity(tris.len() * 3);
+        for &t in tris {
+            let Some(triangle) = mesh.triangles.get(t) else { continue };
+            let mut indices = [0u32; 3];
+            let mut complete = true;
+            for (slot, &v) in indices.iter_mut().zip(triangle.iter()) {
+                if let Some(index) = remap.get(&v).copied() {
+                    *slot = index;
+                    continue;
+                }
+                let Some(point) = mesh.positions.get(v as usize) else {
+                    complete = false;
+                    break;
+                };
+                let index = u32::try_from(positions.len()).map_err(|_| IoError::Invalid("KiCad model mesh too large".into()))?;
+                positions.push(*point);
+                remap.insert(v, index);
+                *slot = index;
+            }
+            if complete {
+                triangles.extend_from_slice(&indices);
+            }
+        }
+        if triangles.is_empty() {
+            continue;
+        }
+        let name = if colors.len() == 1 { name.to_string() } else { format!("{name} {}", n + 1) };
+        out.push(solidcraft_doc::MeshData {
+            name,
+            positions: positions.into_iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
+            triangles,
+            color: *color,
+        });
+    }
+    Ok(out)
 }
 
 fn model_transform_key(model: &KicadModel, back: bool) -> [u64; 10] {

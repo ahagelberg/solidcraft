@@ -732,3 +732,26 @@ fn a_bare_pad_stands_above_the_masked_copper() {
     assert!((trace - 1.635).abs() < 1e-9, "the masked trace is a foil thick: {trace}");
     assert!((pad - (1.635 + PAD_PROUD)).abs() < 1e-9, "the bare pad stands proud: {pad}");
 }
+
+#[test]
+fn model_face_colours_become_one_mesh_each() {
+    // A box body with a per-face style, as a KiCad package's STEP model has: its bottom face is
+    // blue, every other face takes the body colour.
+    let square = [Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 2.0), Vec2::new(0.0, 2.0)];
+    let region = Region2 { outer: Loop2::polygon(&square), holes: Vec::new() };
+    let body = solidcraft_kernel::extrude(&Plane::XY, &[region], 0.0, 1.0).expect("box").into_iter().next().expect("one body");
+    let painted = body.with_paint(Some(solidcraft_kernel::Paint {
+        opacity: 1.0,
+        faces: vec![solidcraft_kernel::FacePaint { face: 0, color: [0.0, 0.0, 1.0], opacity: 1.0 }],
+    }));
+    let meshes = model_body_meshes("part", &painted, Some([1.0, 0.0, 0.0])).expect("model meshes");
+    assert_eq!(meshes.len(), 2, "{:?}", meshes.iter().map(|m| m.color).collect::<Vec<_>>());
+    let blue = meshes.iter().find(|m| m.color == Some([0.0, 0.0, 1.0])).expect("the styled face");
+    let red = meshes.iter().find(|m| m.color == Some([1.0, 0.0, 0.0])).expect("the body colour");
+    assert!(!blue.triangles.is_empty() && !red.triangles.is_empty());
+    let total: usize = meshes.iter().map(|m| m.triangles.len() / 3).sum();
+    assert_eq!(total, painted.tessellate(0.1).expect("tessellation").triangles.len());
+    for mesh in &meshes {
+        assert!(mesh.triangles.iter().all(|i| (*i as usize) < mesh.positions.len() / 3), "{} indexes its own vertices", mesh.name);
+    }
+}
