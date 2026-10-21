@@ -755,3 +755,41 @@ fn model_face_colours_become_one_mesh_each() {
         assert!(mesh.triangles.iter().all(|i| (*i as usize) < mesh.positions.len() / 3), "{} indexes its own vertices", mesh.name);
     }
 }
+
+#[test]
+fn a_zone_opens_up_for_a_mounting_holes_drill() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 20) (layer "Edge.Cuts"))
+      (footprint "MountingHole" (layer "F.Cu") (at 10 10)
+        (pad "1" thru_hole circle (at 0 0) (size 6.4 6.4) (drill 3.2) (layers "*.Cu" "*.Mask")))
+      (zone (net 1) (net_name "GND") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 2 2) (xy 18 2) (xy 18 18) (xy 2 18)))))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "mounting.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    let zone = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("front copper");
+    let area = solidcraft_kernel::measure(&zone.body).expect("bounds").volume / 0.035;
+    // The pour with the mounting hole's drill open through it, though the zone fill covers it.
+    let expected = 16.0 * 16.0 - std::f64::consts::PI * 1.6 * 1.6;
+    assert!((area - expected).abs() < 0.05, "{area} vs {expected}");
+}
+
+#[test]
+fn a_pad_opens_up_for_any_hole_it_covers() {
+    let source = r#"(kicad_pcb (general (thickness 1.6))
+      (gr_rect (start 0 0) (end 20 20) (layer "Edge.Cuts"))
+      (via (at 5 5) (size 1.2) (drill 0.6) (layers "F.Cu" "B.Cu") (net 1))
+      (footprint "part" (layer "F.Cu") (at 0 0)
+        (pad "1" smd rect (at 5 5) (size 3 3) (layers "F.Cu" "F.Mask"))))"#;
+    let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
+    let mut load = |_: &str| Err("not used".to_string());
+    let imported = read_kicad(source.as_bytes(), "unplated.kicad_pcb", &options, &mut load).unwrap();
+    let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
+    let pad = imp.bodies.iter().find(|b| b.name == "Copper F.Cu pads").expect("bare pad copper");
+    // A bare pad stands above the masked copper, so it is PAD_PROUD thicker.
+    let area = solidcraft_kernel::measure(&pad.body).expect("bounds").volume / (0.035 + 0.005);
+    // The pad with the via's drill open through it: the pad data names no drill of its own.
+    let expected = 9.0 - std::f64::consts::PI * 0.3 * 0.3;
+    assert!((area - expected).abs() < 0.05, "{area} vs {expected}");
+}

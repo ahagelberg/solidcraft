@@ -1996,7 +1996,7 @@ fn copper_meshes(board: &KicadBoard, thickness: f64, mode: KicadCopper, warnings
         if contours.is_empty() {
             continue;
         }
-        let regions = regions_from_loops(contours, None);
+        let regions = regions_from_loops(contours, Some(&board.drills));
         let front_side = zone.layer == "F.Cu";
         let (z0, z1) = if front_side { (top, bottom) } else { (under, under_top) };
         let plate = if front_side { &mut front } else { &mut back };
@@ -2014,10 +2014,9 @@ fn copper_meshes(board: &KicadBoard, thickness: f64, mode: KicadCopper, warnings
                 continue;
             }
             let loops = pad_loops(pad);
-            // A through-hole pad's drill is a hole through its copper too.
-            let holes = pad_drill_holes(pad, &transform);
             for loop_ in loops {
                 let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
+                let holes = clean_loop(&points).map(|outer| pad_holes(&outer, &points, &board.drills)).unwrap_or_default();
                 if on_front {
                     let exposed = mask_open(pad, "F.Mask");
                     let plate = if exposed { &mut front_pads } else { &mut front };
@@ -2187,7 +2186,7 @@ fn copper_brep(board: &KicadBoard, thickness: f64, warnings: &mut Vec<String>) -
         if contours.is_empty() {
             continue;
         }
-        let regions = regions_from_loops(contours, None);
+        let regions = regions_from_loops(contours, Some(&board.drills));
         push(if zone.layer == "F.Cu" { &mut front } else { &mut back }, regions);
     }
     for footprint in &board.footprints {
@@ -2198,14 +2197,13 @@ fn copper_brep(board: &KicadBoard, thickness: f64, warnings: &mut Vec<String>) -
             if !on_front && !on_back {
                 continue;
             }
-            // A through-hole pad's drill is a hole through its copper too.
-            let holes = pad_drill_holes(pad, &transform);
             let regions: Vec<Region2> = pad_loops(pad)
                 .into_iter()
                 .filter_map(|loop_| {
                     let points: Vec<[f64; 2]> = loop_.iter().map(|p| apply2(&transform, p[0], p[1])).collect();
                     let outer = clean_loop(&points)?;
-                    Some(Region2 { outer, holes: holes.clone() })
+                    let holes = pad_holes(&outer, &points, &board.drills);
+                    Some(Region2 { outer, holes })
                 })
                 .collect();
             if on_front {
@@ -2461,16 +2459,41 @@ fn pad_drill_points(pad: &KicadPad) -> Option<Vec<[f64; 2]>> {
     Some(hole.polyline(1e-3).to_vec().into_iter().map(|p| [p.x, p.y]).collect())
 }
 
-/// The holes a pad's drill makes, in the board frame and wound as region holes.
-fn pad_drill_holes(pad: &KicadPad, transform: &Mat) -> Vec<Loop2> {
-    pad_drill_points(pad)
-        .and_then(|points| {
-            let moved: Vec<[f64; 2]> = points.iter().map(|p| apply2(transform, p[0], p[1])).collect();
-            clean_loop(&moved)
-        })
-        .map(|l| l.reversed())
-        .into_iter()
-        .collect()
+/// The holes a pad's copper opens up for: every drill of the board whose centre the pad covers.
+/// A drill goes through the board, so copper over one opens up for it whether or not the pad's own
+/// data names a drill there (a mounting hole whose pad carries none, say); two drills at one spot
+/// leave one hole, the wider one. A drill as wide as the pad leaves it no copper (the hole wins),
+/// which the region builder settles by refusing the ring.
+fn pad_holes(outer: &Loop2, points: &[[f64; 2]], drills: &[KicadDrill]) -> Vec<Loop2> {
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for p in points {
+        min_x = min_x.min(p[0]);
+        min_y = min_y.min(p[1]);
+        max_x = max_x.max(p[0]);
+        max_y = max_y.max(p[1]);
+    }
+    let mut widest: std::collections::BTreeMap<(i64, i64), (f64, Loop2)> = std::collections::BTreeMap::new();
+    for drill in drills {
+        let size = [drill.size[0].abs(), drill.size[1].abs()];
+        if !(size[0].is_finite() && size[1].is_finite()) || size[0].min(size[1]) <= 1e-6 || size[0].max(size[1]) > MAX_NUMBER {
+            continue;
+        }
+        let center = Vec2::new(drill.center[0], drill.center[1]);
+        if center.x < min_x || center.x > max_x || center.y < min_y || center.y > max_y || !outer.contains(center) {
+            continue;
+        }
+        let reach = size[0].max(size[1]) * 0.5;
+        let key = ((center.x * 1000.0).round() as i64, (center.y * 1000.0).round() as i64);
+        let hole =
+            if (size[0] - size[1]).abs() <= 1e-6 { Loop2::circle_from(center, size[0] * 0.5, 0.0) } else { slot_loop(center, size[0], size[1]) };
+        match widest.get(&key) {
+            Some((wider, _)) if *wider >= reach => {}
+            _ => {
+                widest.insert(key, (reach, hole));
+            }
+        }
+    }
+    widest.into_values().map(|(_, hole)| hole.reversed()).collect()
 }
 
 fn oval_points(sx: f64, sy: f64) -> Vec<[f64; 2]> {
