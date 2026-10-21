@@ -2104,10 +2104,10 @@ fn copper_meshes(board: &KicadBoard, thickness: f64, mode: KicadCopper, warnings
         out.push((back, "Copper B.Cu".to_string(), masked));
     }
     if !front_pads.is_empty() {
-        out.push((front_pads, "Copper F.Cu pads".to_string(), COPPER_COLOR));
+        out.push((front_pads, "Copper F.Cu pads".to_string(), PAD_COLOR));
     }
     if !back_pads.is_empty() {
-        out.push((back_pads, "Copper B.Cu pads".to_string(), COPPER_COLOR));
+        out.push((back_pads, "Copper B.Cu pads".to_string(), PAD_COLOR));
     }
     out
 }
@@ -2122,7 +2122,11 @@ const MAX_COMPOUND_SHELLS: usize = 512;
 /// runs into) fight for the pixel; this keeps the bare pad on top.
 const PAD_PROUD: f64 = 0.005;
 
-/// Copper where the solder mask is opened (a pad): bare metal.
+/// Copper where the solder mask is opened (a pad): bare metal, and a finished pad has a gold
+/// (ENIG/HASL-gold) surface, not the copper foil's colour.
+const PAD_COLOR: [f32; 3] = [0.84, 0.69, 0.24];
+
+/// The copper foil's own colour, seen through the solder mask.
 const COPPER_COLOR: [f32; 3] = [0.72, 0.45, 0.20];
 
 /// Copper seen through the solder mask: the board's own colour, warmed a little by the copper's,
@@ -2281,8 +2285,8 @@ fn copper_brep(board: &KicadBoard, thickness: f64, warnings: &mut Vec<String>) -
     let sides = [
         (front, "F.Cu", top, bottom, masked),
         (back, "B.Cu", under, under_top, masked),
-        (front_pads, "F.Cu pads", top, bottom + PAD_PROUD, COPPER_COLOR),
-        (back_pads, "B.Cu pads", under - PAD_PROUD, under_top, COPPER_COLOR),
+        (front_pads, "F.Cu pads", top, bottom + PAD_PROUD, PAD_COLOR),
+        (back_pads, "B.Cu pads", under - PAD_PROUD, under_top, PAD_COLOR),
     ];
     for (regions, layer, z0, z1, color) in sides {
         if regions.is_empty() {

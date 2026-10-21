@@ -286,7 +286,8 @@ fn vrml_models_are_read_and_placed() {
         Ok(KicadModelFile {
             path: path.to_string(),
             bytes: br#"#VRML V2.0 utf8
-      Shape { geometry Box { size 2 2 2 } }"#.to_vec(),
+      Shape { geometry Box { size 2 2 2 } }"#
+                .to_vec(),
         })
     };
     let imported = read_kicad(source.as_bytes(), "board.kicad_pcb", &KicadOptions::default(), &mut load).unwrap();
@@ -409,12 +410,8 @@ fn trace_into_a_via_stops_at_its_drill() {
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
     // The via's copper and the trace overlap, so the copper layer is several solids, not one
     // with a void: their areas add up.
-    let area: f64 = imp
-        .bodies
-        .iter()
-        .filter(|b| b.name == "Copper F.Cu")
-        .map(|b| solidcraft_kernel::measure(&b.body).expect("bounds").volume / 0.035)
-        .sum();
+    let area: f64 =
+        imp.bodies.iter().filter(|b| b.name == "Copper F.Cu").map(|b| solidcraft_kernel::measure(&b.body).expect("bounds").volume / 0.035).sum();
     // The via's ring plus the trace from 10.5 (its 0.3 drill plus half the 0.4 stroke) to 16:
     // nothing over the hole, not even the stroke's corner.
     let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3) + 5.5 * 0.4;
@@ -431,12 +428,8 @@ fn a_trace_crossing_a_hole_is_cut_at_the_hole() {
     let mut load = |_: &str| Err("not used".to_string());
     let imported = read_kicad(source.as_bytes(), "via.kicad_pcb", &options, &mut load).unwrap();
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
-    let area: f64 = imp
-        .bodies
-        .iter()
-        .filter(|b| b.name == "Copper F.Cu")
-        .map(|b| solidcraft_kernel::measure(&b.body).expect("bounds").volume / 0.035)
-        .sum();
+    let area: f64 =
+        imp.bodies.iter().filter(|b| b.name == "Copper F.Cu").map(|b| solidcraft_kernel::measure(&b.body).expect("bounds").volume / 0.035).sum();
     // The ring plus the trace on either side of the hole (6 → 9.5 and 10.5 → 14).
     let expected = std::f64::consts::PI * (0.6 * 0.6 - 0.3 * 0.3) + 2.0 * 3.5 * 0.4;
     assert!((area - expected).abs() < 0.03, "{area} vs {expected}");
@@ -668,9 +661,9 @@ fn a_fill_contour_loses_its_degenerate_details() {
 }
 
 /// The solder mask is not modelled, but its look is: copper under the mask takes the board's
-/// colour (warmed by the copper's), and a pad whose mask is open stays bare copper.
+/// colour (warmed by the copper's), and a pad whose mask is open comes in as gold plating.
 #[test]
-fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
+fn copper_under_the_mask_takes_the_board_colour_and_pads_are_gold() {
     let source = r#"(kicad_pcb (general (thickness 1.6))
       (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
       (segment (start 2 5) (end 12 5) (width 0.4) (layer "F.Cu") (net 1))
@@ -684,7 +677,7 @@ fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
     let find = |name: &str| meshes.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} is missing"));
     let masked = masked_copper_color(DEFAULT_BOARD_COLOR);
     assert_eq!(find("Copper F.Cu").color, Some(masked), "the trace is under the mask");
-    assert_eq!(find("Copper F.Cu pads").color, Some(COPPER_COLOR), "the pad's mask is open");
+    assert_eq!(find("Copper F.Cu pads").color, Some(PAD_COLOR), "the pad's mask is open, and a bare pad is gold");
 
     // B-rep: the same split, the pad's copper keeping its colour through STEP.
     let options = KicadOptions { copper: KicadCopper::Brep, components: false, silkscreen: false, ..Default::default() };
@@ -692,7 +685,7 @@ fn copper_under_the_mask_takes_the_board_colour_and_pads_stay_copper() {
     let imported = read_kicad(source.as_bytes(), "mask.kicad_pcb", &options, &mut load).unwrap();
     let imp = solidcraft_kernel::step_import_shared(&imported.copper.expect("B-rep copper").step).expect("STEP");
     let pad = imp.bodies.iter().find(|b| b.name == "Copper F.Cu pads").expect("the pad's own body");
-    assert_eq!(pad.color, Some(COPPER_COLOR), "{:?}", imp.bodies.iter().map(|b| (&b.name, b.color)).collect::<Vec<_>>());
+    assert_eq!(pad.color, Some(PAD_COLOR), "{:?}", imp.bodies.iter().map(|b| (&b.name, b.color)).collect::<Vec<_>>());
     let trace = imp.bodies.iter().find(|b| b.name == "Copper F.Cu").expect("the trace's body");
     assert_eq!(trace.color, Some(masked));
 }
@@ -805,4 +798,3 @@ fn a_pad_opens_up_for_any_hole_it_covers() {
     let expected = 9.0 - std::f64::consts::PI * 0.3 * 0.3;
     assert!((area - expected).abs() < 0.05, "{area} vs {expected}");
 }
-
