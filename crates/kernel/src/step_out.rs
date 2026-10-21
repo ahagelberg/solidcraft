@@ -1550,7 +1550,10 @@ fn export_lumps(b: &Body) -> Vec<Body> {
     }
     let lumps = match b.lumps() {
         Ok(l) if l.len() > 1 => l,
-        _ => return vec![b.clone()],
+        _ => match pieces_by_shell(b) {
+            Some(pieces) => pieces,
+            None => return vec![b.clone()],
+        },
     };
     let index: HashMap<_, usize> = b.solid.face_iter().enumerate().map(|(i, f)| (f.id(), i)).collect();
     lumps
@@ -1571,6 +1574,26 @@ fn export_lumps(b: &Body) -> Vec<Body> {
             lump.with_color(b.color()).with_split_lines(b.split_lines().cloned()).with_paint(paint)
         })
         .collect()
+}
+
+/// The pieces of a body whose shells are each a piece in its own right, when [`Body::lumps`]
+/// cannot tell them apart — a compound of overlapping solids (a copper trace running into a
+/// via's ring): written as one solid, the second shell becomes a void, and a reader turns it
+/// inside out, so the piece's volume comes back subtracted.
+///
+/// Only when every shell encloses material of its own: a shell enclosing volume of the opposite
+/// sign is a cavity of the shell it sits in and stays with it, as a void. A body whose pieces
+/// cannot be told apart this way either is left whole.
+fn pieces_by_shell(b: &Body) -> Option<Vec<Body>> {
+    let shells = b.solid.boundaries();
+    let volumes = shells.iter().map(crate::body::shell_volume).collect::<Option<Vec<_>>>()?;
+    if volumes.iter().any(|volume| *volume <= 0.0) {
+        return None;
+    }
+    shells
+        .iter()
+        .map(|shell| Body::new(truck_modeling::Solid::new_unchecked(vec![shell.clone()])).ok())
+        .collect::<Option<Vec<_>>>()
 }
 
 /// Faces in the exchange's shells (fewer after merging).
@@ -1846,6 +1869,24 @@ pub fn step_export_bodies(bodies: &[ExportBody], header: &StepHeader) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A compound of pieces that overlap — copper: a trace running into a via's ring — cannot be
+    /// told apart as lumps, and written as one solid its second shell becomes a void; a reader
+    /// then turns that piece inside out, and its volume comes back subtracted. Each piece is a
+    /// solid of its own instead, and a cavity still stays a void.
+    #[test]
+    fn overlapping_pieces_are_solids_of_their_own_not_voids() {
+        let strip = |a: Vec3, b: Vec3| crate::box_solid(a, b).unwrap();
+        let a = strip(Vec3::ZERO, Vec3::new(10.0, 10.0, 2.0));
+        let b = strip(Vec3::new(5.0, 5.0, 0.0), Vec3::new(15.0, 7.0, 2.0));
+        let body = crate::compound(&[&a, &b]).unwrap();
+        assert_eq!(body.shell_count(), 2);
+        let text = crate::step_export(&[&body], "test").unwrap();
+        assert_eq!(text.matches("BREP_WITH_VOIDS").count(), 0, "{text}");
+        let imp = crate::step_import(&text).unwrap();
+        let v: f64 = imp.bodies.iter().map(|b| crate::measure(&b.body).unwrap().volume).sum();
+        assert!((v - (200.0 + 40.0)).abs() < 1e-6, "{v}");
+    }
 
     #[test]
     fn islands_are_solids_of_their_own_not_voids() {
