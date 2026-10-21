@@ -69,7 +69,7 @@ fn a_face_touching_its_own_edge_meshes() {
     let face = mt::Face::new(vec![wire], mt::Surface::Plane(plane));
     let shell: mt::Shell = vec![face].into();
     for tol in [0.3, 0.08, 0.02, 0.005] {
-        let meshed = shell.robust_triangulation_within(Deflection { rulings: true, ..Deflection::chord(tol) });
+        let meshed = shell.robust_triangulation_within(Deflection { display: true, ..Deflection::chord(tol) });
         let face = meshed.face_iter().next().unwrap();
         let boundary: Vec<mt::Point3> = face.boundaries()[0].edge_iter().flat_map(|e| e.oriented_curve().0.into_iter().skip(1)).collect();
         let mesh = face.surface().unwrap();

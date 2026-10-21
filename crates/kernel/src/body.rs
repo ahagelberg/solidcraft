@@ -256,7 +256,7 @@ const MIN_DISPLAY_ANGLE: f64 = std::f64::consts::PI / 180.0;
 /// non-manifold shells an import can produce). Boundaries that lie on their surface only within
 /// tolerance (imports, boolean results) are projected onto it.
 fn mesh_shells(solid: &Solid, tol: f64) -> Vec<MeshedShell> {
-    mesh_shells_within(solid, Deflection { rulings: true, ..Deflection::chord(tol) })
+    mesh_shells_within(solid, Deflection { display: true, ..Deflection::chord(tol) })
 }
 
 /// [`mesh_shells`] divided by a chord tolerance and, when it has one, a bound on the angle a
@@ -541,6 +541,17 @@ thread_local! {
     pub(crate) static REPHASED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// The volume one closed shell encloses, signed by the way its faces face (positive when they
+/// face out of it), from a mesh as coarse as the orientation mesh of a solid of its size.
+/// `None` when it cannot be meshed.
+pub(crate) fn shell_volume(shell: &mt::Shell) -> Option<f64> {
+    let bounds: Aabb3 = shell.vertex_iter().map(|v| from_p3(v.point())).collect();
+    let span = if bounds.is_empty() { 1.0 } else { bounds.diagonal() };
+    let deflection = Deflection { display: true, ..Deflection::chord(orientation_tolerance(span)) };
+    let v = guard("shell volume", || Ok(shell.robust_triangulation_within(deflection).to_polygon().volume())).ok()?;
+    v.is_finite().then_some(v)
+}
+
 /// Deflection the orientation mesh uses: coarse enough for a large solid, fine enough that a
 /// small one still tessellates. `unmeshed_faces` counts at the same value, so the count the
 /// orientation mesh produced is reused instead of meshing the body again.
@@ -584,17 +595,22 @@ impl Body {
     /// operation made it) is not part of it: an operation that leaves a body as it is (a cut by
     /// a tool clear of it) gives the same body, with that operation's history.
     pub fn same(&self, other: &Body) -> bool {
+        self.same_shape(other)
+            && self.color == other.color
+            && same_shared(&self.paint, &other.paint)
+            && same_shared(&self.splits, &other.splits)
+            && same_shared(&self.face_sources, &other.face_sources)
+            && self.regularization_protected == other.regularization_protected
+    }
+
+    /// The very same shape (shared solid or mesh), whatever its colour, paint or face splits.
+    pub fn same_shape(&self, other: &Body) -> bool {
         std::sync::Arc::ptr_eq(&self.solid, &other.solid)
             && match (&self.mesh, &other.mesh) {
                 (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
                 (None, None) => true,
                 _ => false,
             }
-            && self.color == other.color
-            && same_shared(&self.paint, &other.paint)
-            && same_shared(&self.splits, &other.splits)
-            && same_shared(&self.face_sources, &other.face_sources)
-            && self.regularization_protected == other.regularization_protected
     }
 
     pub(crate) fn new(solid: Solid) -> Result<Body> {
@@ -1088,6 +1104,52 @@ impl Body {
         if d.is_finite() && d > 0.0 { d } else { 1.0 }
     }
 
+    /// A box around the body worked out without meshing it: its vertices and its edges' control
+    /// points (a spline lies in the hull of its controls; a face's surface does not count, as an
+    /// imported face is often trimmed from a far larger one). A face curving out beyond all of
+    /// its edges (a dome on a circle) can reach past it, so it frames a view while the body is
+    /// still being meshed; [`Mesh::bounds`] is the exact one.
+    /// A mesh body's box is its triangles'.
+    pub fn outline_bounds(&self) -> solidcraft_geom::Aabb3 {
+        crate::guard("outline bounds", || Ok(self.outline_bounds_unguarded())).unwrap_or(solidcraft_geom::Aabb3::EMPTY)
+    }
+
+    fn outline_bounds_unguarded(&self) -> solidcraft_geom::Aabb3 {
+        use mt::BoundedCurve;
+        let mut b = solidcraft_geom::Aabb3::EMPTY;
+        if let Some(m) = &self.mesh {
+            for p in &m.positions {
+                b.add(*p);
+            }
+            return b;
+        }
+        let homogeneous = |b: &mut solidcraft_geom::Aabb3, v: mt::Vector4| {
+            if v.w > 0.0 {
+                b.add(Vec3::new(v.x / v.w, v.y / v.w, v.z / v.w));
+            }
+        };
+        for v in self.solid.vertex_iter() {
+            b.add(from_p3(v.point()));
+        }
+        for e in self.solid.edge_iter() {
+            match e.curve() {
+                mt::Curve::Line(l) => {
+                    b.add(from_p3(l.0));
+                    b.add(from_p3(l.1));
+                }
+                mt::Curve::BSplineCurve(c) => c.control_points().iter().for_each(|p| b.add(from_p3(*p))),
+                mt::Curve::NurbsCurve(c) => c.control_points().iter().for_each(|p| homogeneous(&mut b, *p)),
+                mt::Curve::IntersectionCurve(c) => {
+                    let (t0, t1) = c.range_tuple();
+                    for i in 0..=8 {
+                        b.add(from_p3(mt::ParametricCurve::subs(&e.curve(), t0 + (t1 - t0) * f64::from(i) / 8.0)));
+                    }
+                }
+            }
+        }
+        b
+    }
+
     /// The body's volume from a mesh at `tol`, measured once per (solid, tolerance): clones of
     /// a body share the measurement, so an operand a later boolean takes again is not meshed
     /// twice for the same number. `None` when the body cannot be meshed.
@@ -1207,9 +1269,9 @@ impl Body {
             }
         }
         let deflection = if angle.is_finite() && angle > 0.0 {
-            Deflection { chord: tol, angle: angle.max(MIN_DISPLAY_ANGLE), floor: tol * DISPLAY_ANGLE_FLOOR, rulings: true }
+            Deflection { chord: tol, angle: angle.max(MIN_DISPLAY_ANGLE), floor: tol * DISPLAY_ANGLE_FLOOR, display: true }
         } else {
-            Deflection { rulings: true, ..Deflection::chord(tol) }
+            Deflection { display: true, ..Deflection::chord(tol) }
         };
         guard("tessellate", || {
             let meshed = mesh_shells_within(&self.solid, deflection);

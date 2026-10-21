@@ -16144,6 +16144,14 @@ Bundled fonts (SIL Open Font License, Version 1.1)
   Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-mincho)
   Source: https://github.com/googlefonts/morisawa-biz-ud-gothic
 
+- IBMPlexSans-Variable.ttf (assets/fonts/ibm-plex-sans/IBMPlexSans-Variable.ttf)
+  Copyright 2017 IBM Corp. with Reserved Font Name "Plex"
+  Source: https://github.com/IBM/plex
+
+- IBMPlexMono-Regular.ttf (assets/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf)
+  Copyright 2017 IBM Corp. with Reserved Font Name "Plex"
+  Source: https://github.com/IBM/plex
+
 ================================================================================
 SIL OPEN FONT LICENSE Version 1.1
 ================================================================================

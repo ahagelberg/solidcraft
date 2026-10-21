@@ -3,11 +3,11 @@
 
 use std::cell::RefCell;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const MAX_EVENTS: usize = 1024;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BooleanStrategy {
     RefinedTolerance,
@@ -29,7 +29,7 @@ pub enum BooleanStrategy {
 /// Numerical adjustments used by a successful retry, in millimetres/radians.
 /// Operand shifts are reversed on the result; face shifts are temporary working
 /// offsets. A tool nudge, in contrast, changes the relative operand placement.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BooleanFallback {
     pub strategy: BooleanStrategy,
     pub translation_mm: f64,
@@ -73,7 +73,7 @@ impl BooleanFallback {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BooleanDiagnostics {
     pub events: Vec<BooleanFallback>,
     pub truncated: bool,

@@ -30,6 +30,11 @@ Changes:
   With no direction to go by, the edge goes where both of its ends are in one wire.
 - `transversal/divide_face/mod.rs`: a face piece whose wire is not simple makes the operation
   give up (`Face::try_new`) instead of panicking.
+- `transversal/divide_face/mod.rs`: a loop whose polygon in the face's parameters has no area
+  (a small hole's rim divided at the tolerance of a much larger operand: one chord per half
+  circle) is divided again, finer, before its area's sign tells a hole from a face piece. The
+  sign of a zero area was random: the hole became a face of its own, inside out, and the face it
+  was cut in stayed whole.
 - `lib.rs`: `tr!` reports where an operation gives up when `SHAPEOPS_TRACE` is set; compiler
   warnings no longer fail the build.
 - Face and edge history (`transversal/history.rs`, new): `and_with_history` / `or_with_history`
@@ -180,6 +185,22 @@ Changes:
   old test is kept as `tessellation::include_test_hooks`, behind a `test-hooks` feature that
   only `solidcraft-kernel`'s tests turn on, and `crates/kernel/tests/tess_include_equivalence.rs`
   compares the two.
+- `tessellation/triangulation.rs`: the constrained Delaunay triangulation of a trimmed face
+  works in (u, v) scaled by the surface's mean speed along each (a power of two, so exact both
+  ways). In raw parameters, a loft side ruled across (about 30 mm) and long along the loft
+  (about 600 mm) is a strip stretched twentyfold, and a trimming node was fanned to boundary
+  nodes hundreds of millimetres away: a flat sheet through a joined tube.
+- `tessellation/triangulation.rs`: every segment of a face's boundary becomes a constraint; one
+  that crosses or overlaps a constraint already added (an intersection edge's polyline can hook
+  back a few micrometres past its vertex) is split where they meet. truck dropped such a
+  segment and joined its start to the first later node it could reach, which on a joined tube
+  left a trimming curve's 130 nodes behind one constraint across the face: slivers from it
+  sagged millimetres off the surface, and a face pinched to a point (#1648) got no triangles.
+  All meshes; faces whose segments all go in mesh as before.
+- `tessellation/mod.rs`: `Deflection::rulings` is now `Deflection::display`: a mesh to display
+  or export (the kernel's `tessellate` and display meshes), which gets the ruling grid lines,
+  and the speed-scaled triangulation above. The meshes a Boolean operation intersects
+  (`Deflection::chord`) keep truck's (u, v) and insertion order.
 - `lib.rs`: compiler warnings no longer fail the build. Example, test and bench targets are
   dropped (their sources are not vendored).
 - `tessellation/triangulation.rs`: adaptive division also splits a cell that bows off its
@@ -191,21 +212,12 @@ Changes:
   face's mesh puts each point at its parameters on the face's own surface, so a point of an edge
   that lies off a surface within tolerance (an intersection-curve sample whose projection did not
   converge, an imported edge) came out in a different place on each of the edge's faces, and the
-  exported mesh had a crack there. In display and export meshes (`Deflection::rulings`), a
+  exported mesh had a crack there. In display and export meshes (`Deflection::display`), a
   vertex at a point of a face's boundary loops that is farther than `TOLERANCE` from the nearest
   point of the face's edges now goes to that point, when it is within the chord tolerance
   (`onto_edges`). Points within `TOLERANCE` stay on the surface, so exact geometry meshes as
   before. The meshes Boolean operations intersect keep truck's points.
-- `tessellation/triangulation.rs`: a face whose boundary touches itself or another of its loops
-  within `TOLERANCE` (pinched to a point where a body touches its edge, #1648) can cross there by
-  less than that. A segment that would cross one already added was left out of the triangulation,
-  and the fallback that joins the next point instead cut across the face: such a face came out
-  with no triangles, or without those at the pinch, depending on which segment went in first.
-  When a segment is left out, every boundary point within `TOLERANCE` of a segment, away from its
-  ends, is put into it (`pinched`: at most 8192 boundary points, and at most 8192 put in), and
-  the face is triangulated again. Faces whose segments all go in are triangulated as before.
-
-- `tessellation/triangulation.rs`: in display and export meshes (`Deflection::rulings`), a
+- `tessellation/triangulation.rs`: in display and export meshes (`Deflection::display`), a
   direction left undivided along the rulings of a face ruled one way also gets a grid line
   through each point of the face's boundary that lies inside the face along it
   (`with_boundary_lines`), when there are at most 16 such points: corners standing into the

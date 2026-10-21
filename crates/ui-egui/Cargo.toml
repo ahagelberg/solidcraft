@@ -46,6 +46,9 @@ arboard = { version = "3.6", default-features = false, features = ["image-data"]
 # updated by its installer (MIT; already in the tree as a build dependency).
 winreg = "0.56"
 
+[dev-dependencies]
+# Parse the source guard structurally, including code after inline test modules.
+syn = { workspace = true, features = ["visit"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The offscreen viewport render test opens a device without a window.
 pollster = { workspace = true }

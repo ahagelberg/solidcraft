@@ -1799,6 +1799,21 @@ where
     if let Some(body) = fine(&mut last) {
         return Ok(Some(body));
     }
+    // An intersection keeps what lies in both bodies: when the sampled answer keeps one of them
+    // whole and is contradicted by facets that cross well past their faceting error, keeping it
+    // would keep exactly what the intersection was asked to trim (#3244: teeth standing 0.27 mm
+    // out of a trimming cylinder came back untrimmed). It fails instead, and the model is kept.
+    // An empty answer stays reported as unverified: the clearance checks measure it another way.
+    let deep = 2.0 * 3.0 * tol_m;
+    if op == BoolOp::Intersect
+        && matches!(doubted, Some(Some(_)))
+        && let (Some(ma), Some(mb)) = &meshes
+        && ma.crosses(mb, deep)
+    {
+        return Err(KernelError::Failed(format!(
+            "boolean {op:?}: the bodies pass through each other by more than {deep:.3e} mm where they could not be intersected; {last}"
+        )));
+    }
     match doubted {
         Some(r) => {
             let mut event = BooleanFallback::new(BooleanStrategy::UnverifiedShortcut);
@@ -2110,6 +2125,15 @@ pub fn place_matrix(body: &Body, m: [[f64; 4]; 4]) -> Result<Body> {
 fn transform_matrix_keeping(body: &Body, m: [[f64; 4]; 4], phased: bool) -> Result<Body> {
     if m.iter().flatten().any(|x| !x.is_finite()) {
         return Err(KernelError::Invalid("non-finite transform".into()));
+    }
+    // A perspective row or a flattening (from a design file or a command's parameters) leaves
+    // no solid: refused rather than built into faces that mesh to nonsense.
+    let scale = (0..3).map(|c| Vec3::new(m[c][0], m[c][1], m[c][2]).len()).fold(0.0, f64::max);
+    if m[0][3].abs() > 1e-12 || m[1][3].abs() > 1e-12 || m[2][3].abs() > 1e-12 || (m[3][3] - 1.0).abs() > 1e-12 {
+        return Err(KernelError::Invalid("the transform is not affine: its last row must be 0, 0, 0, 1".into()));
+    }
+    if det3(&m).abs() <= 1e-12 * scale.powi(3) {
+        return Err(KernelError::Invalid("the transform flattens the body: its linear part is singular".into()));
     }
     if let Some(placed) = body.mesh_transformed(&m) {
         let history = crate::history::History::identity(&placed);
