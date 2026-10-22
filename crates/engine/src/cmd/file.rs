@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"none\" (default: leave the traces out), \"overlay\" (a flat copper surface on the board) or \"mesh\" (modelled with thickness; true also means mesh; pads are included whenever copper is enabled); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh (the board itself)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf/.kicad_pro/.kicad_pcb file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF or KiCad PCB; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); for a KiCad PCB: thickness?: board thickness in mm (default from the board); components?: bool (default true); copper?: \"none\" (default: leave the traces out), \"overlay\" (a flat copper surface on the board) or \"mesh\" (modelled with thickness; true also means mesh; pads are included whenever copper is enabled); silkscreen?: bool (default true: the silk shapes and text); color?: \"#rrggbb\" or [r, g, b] (board substrate colour); representation?: mesh|brep (the board itself; default brep: a solid whose faces can be picked)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -148,6 +148,11 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>, options: &StepOptio
 /// The bodies an import feature built, by name.
 fn created_bodies(s: &Session, feature: u64) -> Vec<String> {
     s.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect()
+}
+
+/// The bodies these features built, by name (an import whose solid part is a second feature).
+fn created_bodies_of(s: &Session, features: &[u64]) -> Vec<String> {
+    s.model.state().bodies.iter().filter(|b| features.contains(&b.feature)).map(|b| b.name.clone()).collect()
 }
 
 /// Add a MeshImport feature for a 3MF, STL, OBJ or glTF file, in a new component named after the
@@ -281,12 +286,9 @@ fn kicad_options(p: &Value, cmd: &str) -> Result<solidcraft_io::KicadOptions> {
         options.color = Some(parse_kicad_color(v).ok_or_else(|| bad(cmd, "`color` must be \"#rrggbb\" or [r, g, b] with values 0-255"))?);
     }
     if let Some(v) = p.get("representation").or(p.get("mode")).filter(|v| !v.is_null()) {
-        let name = v.as_str().ok_or_else(|| bad(cmd, "`representation` must be \"mesh\""))?;
+        let name = v.as_str().ok_or_else(|| bad(cmd, "`representation` must be \"mesh\" or \"brep\""))?;
         options.representation =
-            solidcraft_io::KicadRepresentation::parse(name).ok_or_else(|| bad(cmd, "`representation` must be \"mesh\""))?;
-        if options.representation == solidcraft_io::KicadRepresentation::Brep {
-            return Err(EngineError::Other("not supported yet: B-rep KiCad imports (choose mesh)".into()));
-        }
+            solidcraft_io::KicadRepresentation::parse(name).ok_or_else(|| bad(cmd, "`representation` must be \"mesh\" or \"brep\""))?;
     }
     Ok(options)
 }
@@ -342,9 +344,18 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
     let component_name = import::component_name(path, name);
     let tree = if imported.plan.places.is_empty() { import::Tree::Flat } else { import::Tree::Mesh(&imported.plan) };
     let (id, placed) = import::add_in_component(s, feature.kind, &feature_name, feature.body_names, &component_name, tree)?;
-    let bodies = created_bodies(s, id);
+    // A solid board is a STEP import of its own, in the board's component: the mesh feature holds
+    // the copper, silkscreen and models, this holds the substrate.
+    let mut features = vec![id];
+    if let Some(step) = imported.board_step {
+        features.push(import::add_step_in_component(s, placed.component, "board.step", step, &feature_name)?);
+    }
+    let bodies = created_bodies_of(s, &features);
     let mut out = json!({"path": path, "board_path": board_path, "feature": id, "name": feature_name, "bodies": bodies, "created_bodies": bodies, "warnings": feature.warnings});
     placed.report(&mut out);
+    if features.len() > 1 {
+        out["board_solid"] = json!(true);
+    }
     Ok(out)
 }
 
