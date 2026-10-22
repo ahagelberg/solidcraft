@@ -41,13 +41,11 @@ pub struct State {
     /// goes to another folder), so its message stays on screen instead of a spinner.
     failed: Option<String>,
     rename: Option<Rename>,
-    new_folder: Option<String>,
-    new_folder_focus: bool,
     confirm: Option<Confirm>,
     /// A repository root whose existence/create check was done (by path, so corrections are tried).
     created: Option<String>,
     /// The row picked last.
-    selected: Option<String>,
+    pub(crate) selected: Option<String>,
     /// Where the panel was drawn last frame (`None` while it is hidden).
     panel_rect: Option<egui::Rect>,
     /// The panel was the last thing clicked in, so F2 renames its rows (not the model's selection).
@@ -181,6 +179,12 @@ enum Action {
         name: String,
     },
     Move(String),
+    /// Copy a design into a folder the user picks (in any repository).
+    CopyTo(String),
+    /// A second copy beside the design.
+    Duplicate(String),
+    /// Make a folder inside this one (the New Folder window).
+    NewFolder(String),
     Delete {
         path: String,
         name: String,
@@ -202,14 +206,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.designs.panel_rect = None;
         app.designs.version_menu = None;
         app.designs.rename = None;
-        app.designs.new_folder = None;
         return;
     }
     accept_drag(app, ui.ctx());
     if !app.ui.show_designs {
         app.designs.panel_rect = None;
         app.designs.rename = None;
-        app.designs.new_folder = None;
         return;
     }
     pump(app, ui.ctx());
@@ -703,30 +705,9 @@ fn navigate(app: &mut SolveApp, path: PathBuf) {
 
 fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        if app.designs.new_folder.is_some() {
-            let mut name = app.designs.new_folder.take().unwrap_or_default();
-            let id = egui::Id::new("designs-new-folder");
-            let focused = ui.memory(|m| m.has_focus(id));
-            let entered = focused && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let cancelled = focused && ui.input(|i| i.key_pressed(egui::Key::Escape));
-            let response = ui.add(egui::TextEdit::singleline(&mut name).id(id).desired_width(130.0).hint_text(crate::i18n::tr("designs.name")));
-            if app.designs.new_folder_focus {
-                response.request_focus();
-                app.designs.new_folder_focus = false;
-            }
-            if ui.button(crate::i18n::tr("designs.create")).clicked() || entered {
-                create_folder(app, &name);
-            } else if cancelled || response.lost_focus() {
-                app.designs.new_folder = None;
-            } else {
-                app.designs.new_folder = Some(name);
-            }
-            if ui.button("×").on_hover_text(crate::i18n::tr("designs.cancel")).clicked() {
-                app.designs.new_folder = None;
-            }
-        } else if ui.button(crate::i18n::tr("designs.new_folder")).clicked() {
-            app.designs.new_folder = Some(String::new());
-            app.designs.new_folder_focus = true;
+        // The same New Folder window a folder's own menu opens, in the folder the panel shows.
+        if ui.button(crate::i18n::tr("designs.new_folder")).clicked() {
+            open_new_folder(app);
         }
         if ui.button(crate::i18n::tr("designs.refresh")).clicked() {
             app.designs.entries = None;
@@ -768,25 +749,26 @@ fn view_button(ui: &mut egui::Ui, t: &Tokens, key: &str, icon: &str, tip: &str) 
     response.on_hover_text(crate::i18n::tr(tip)).clicked()
 }
 
-fn create_folder(app: &mut SolveApp, name: &str) {
-    let Some(current) = app.designs.current.clone() else { return };
-    let path = current.join(name.trim());
-    match app.run("designs.folder_new", json!({ "path": path.to_string_lossy() })) {
-        Ok(_) => {
-            app.designs.new_folder = None;
-            app.designs.entries = None;
-            app.designs.refresh = true;
-        }
-        Err(e) => app.set_status(e, true),
-    }
+/// The New Folder window, in the folder the panel shows (the repository root with none).
+fn open_new_folder(app: &mut SolveApp) {
+    let Some(shown) = save_folder(app).map(PathBuf::from) else { return };
+    crate::designs_new_folder::open(app, &shown.to_string_lossy());
 }
 
 /// A message without the command id the engine prefixes its errors with (`designs.folder_new: …`,
 /// "invalid parameters for `designs.folder_new`: …"): what the panel shows under
 /// `designs.unavailable`.
-fn plain(error: &str) -> &str {
+pub(crate) fn plain(error: &str) -> &str {
     let after = |head: &str, tail: &str| error.strip_prefix(head).and_then(|rest| rest.split_once(tail)).map(|(_, message)| message);
     after("designs.", ": ").or_else(|| after("invalid parameters for `", "`: ")).map_or(error, |message| message)
+}
+
+/// Read the panel's folders again: a file or folder was moved, copied or made (by the panel or
+/// the Move/Copy window).
+pub(crate) fn reload(app: &mut SolveApp) {
+    app.designs.entries = None;
+    app.designs.refresh = true;
+    app.designs.tree_entries.clear();
 }
 
 fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
@@ -1283,6 +1265,10 @@ fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 fn folder_menu(_app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, actions: &mut Vec<Action>) {
+    if ui.button(crate::i18n::tr("designs.new_folder_inside")).clicked() {
+        actions.push(Action::NewFolder(path.to_string()));
+        ui.close();
+    }
     if ui.button(crate::i18n::tr("designs.open")).clicked() {
         actions.push(Action::Open(path.to_string()));
         ui.close();
@@ -1322,8 +1308,16 @@ fn design_menu(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, ac
         actions.push(Action::Rename { path: path.to_string(), name: name.to_string() });
         ui.close();
     }
+    if ui.button(crate::i18n::tr("designs.duplicate")).clicked() {
+        actions.push(Action::Duplicate(path.to_string()));
+        ui.close();
+    }
     if ui.button(crate::i18n::tr("designs.move")).clicked() {
         actions.push(Action::Move(path.to_string()));
+        ui.close();
+    }
+    if ui.button(crate::i18n::tr("designs.copy_to")).clicked() {
+        actions.push(Action::CopyTo(path.to_string()));
         ui.close();
     }
     let open = app.docs.is_open(app, path);
@@ -1364,22 +1358,18 @@ fn apply(app: &mut SolveApp, action: Action) {
         }
         Action::Insert(path) => insert_design(app, &path),
         Action::Rename { path, name } => app.designs.rename = Some(Rename { path, name, select_all: true }),
-        Action::Move(path) => {
-            app.pick_folder(move |app, destination| {
-                let Some(destination) = destination else { return };
-                match app.run("designs.move", json!({ "path": path, "destination": destination })) {
-                    Ok(v) => {
-                        app.designs.entries = None;
-                        app.designs.refresh = true;
-                        if let (Some(old), Some(new)) = (v.get("old_path").and_then(Value::as_str), v.get("path").and_then(Value::as_str)) {
-                            crate::documents::retarget(app, old, new);
-                        }
-                        app.set_status(crate::i18n::tr("designs.links_warning"), false);
-                    }
-                    Err(e) => app.set_status(e, true),
+        Action::Move(path) => crate::designs_folder::open(app, &path, false),
+        Action::NewFolder(path) => crate::designs_new_folder::open(app, &path),
+        Action::CopyTo(path) => crate::designs_folder::open(app, &path, true),
+        Action::Duplicate(path) => match app.run("designs.duplicate", json!({ "path": path })) {
+            Ok(v) => {
+                reload(app);
+                if let Some(new) = v.get("path").and_then(Value::as_str) {
+                    app.designs.selected = Some(new.to_string());
                 }
-            });
-        }
+            }
+            Err(e) => app.set_status(e, true),
+        },
         Action::Delete { path, name, folder } => app.designs.confirm = Some(Confirm { path, name, folder, focus_delete: true }),
         Action::Properties { path, name } => {
             let description = app
