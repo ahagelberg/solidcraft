@@ -721,7 +721,7 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let t = Tokens::get();
             let tree = app.preferences.designs_tree;
-            if view_button(ui, &t, "designs:view:tree", "folder", if tree { "designs.tree_hide" } else { "designs.tree" }) {
+            if view_button(ui, &t, "designs:view:tree", "tree", if tree { "designs.tree_hide" } else { "designs.tree" }) {
                 app.preferences.designs_tree = !tree;
                 // Another view starts collapsed, as it does when the panel opens.
                 app.designs.tree.clear();
