@@ -209,6 +209,26 @@ fn the_tree_starts_collapsed_and_opens_folders_in_place() {
     assert!(x("inner") > x("Brackets") + 5.0, "the design is not indented under its folder");
 }
 
+/// A folder's own menu makes a folder inside it, through the same window as the panel's button.
+#[test]
+fn a_folders_menu_makes_a_folder_inside_it() {
+    let mut h = panel();
+    h.run(&json!([
+        { "widget": "New Folder" },
+        { "text": "Brackets" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } },
+        { "click": { "handle": "designs:row:Brackets" }, "button": "right" },
+        { "widget": "New Folder Inside…" },
+        { "text": "Inner" },
+        { "key": "Enter" },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } }
+    ]))
+    .unwrap();
+    assert!(h.dir.join("Brackets").join("Inner").is_dir(), "the folder's menu made no folder inside it: {:?}", listing(&h));
+    assert!(!h.dir.join("Inner").exists(), "the menu made the folder beside the folder, not inside it");
+}
+
 #[test]
 fn the_panel_actions_are_buttons_and_not_text_labels() {
     // The panel's own fill is the header tone, which egui uses for an idle button: a plain
