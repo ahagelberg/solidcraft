@@ -1555,10 +1555,18 @@ impl SolveApp {
                     if inserted.is_ok() {
                         app.fit_view();
                     }
+                } else if solidcraft_engine::io::is_kicad_path(&path) {
+                    kicad_import_dialog::open(app, &path);
                 } else {
                     app.insert_path_async(&path);
                 }
             });
+            return;
+        }
+        if id == "doc.open" {
+            // Open asks for the file (and a board for its import options) rather than running
+            // the command with no path.
+            self.pick_open_file();
             return;
         }
         if id == "component.relink" {
