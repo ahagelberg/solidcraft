@@ -3,8 +3,11 @@
 //! The app language never takes part. Someone reading SolidCraft in English may still live in
 //! Sweden (ISO-like dates) or Taiwan (`2026/10/18`), and someone reading it in Swedish may be
 //! in the US. The locale comes from `LC_TIME` (then `LC_ALL`, `LANG`) on Unix and from the
-//! platform's user locale elsewhere; the pattern is the CLDR short date and short time for that
-//! locale, and an unknown or region-less tag falls back to ISO 8601 rather than guessing.
+//! platform's regional-format setting elsewhere — on Windows the user's Region › Formats choice,
+//! which is a different setting from the display language; a `LANG` there belongs to the shell
+//! the app was started from (Git Bash and MSYS set `en_US.UTF-8` even on a Swedish machine) and
+//! is never used. The pattern is the CLDR short date and short time for that locale, and an
+//! unknown or region-less tag falls back to ISO 8601 rather than guessing.
 
 use std::sync::OnceLock;
 
@@ -31,21 +34,31 @@ pub fn format_with(tag: Option<&str>, unix_secs: u64) -> String {
 fn system_tag() -> Option<String> {
     static TAG: OnceLock<Option<String>> = OnceLock::new();
     TAG.get_or_init(|| {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            unix_time_tag().or_else(sys_locale::get_locale)
-        }
         #[cfg(target_arch = "wasm32")]
         {
             None
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tag_from(cfg!(unix), posix_time_tag(), platform_time_tag())
         }
     })
     .clone()
 }
 
-/// The time locale on Unix (`C` and `POSIX` mean "no locale", not a region).
+/// The tag that decides the pattern: a POSIX variable only where the system keeps its locale in
+/// one (Unix). On Windows the variables are the starting shell's (Git Bash and MSYS set
+/// `en_US.UTF-8` even on a Swedish machine) and the region format comes from the platform, so a
+/// shell's tag is never allowed to decide how dates read.
 #[cfg(not(target_arch = "wasm32"))]
-fn unix_time_tag() -> Option<String> {
+fn tag_from(unix: bool, posix: Option<String>, platform: Option<String>) -> Option<String> {
+    if unix { posix.or(platform) } else { platform }
+}
+
+/// The time locale in the POSIX variables on Unix (`C` and `POSIX` mean "no locale", not a
+/// region).
+#[cfg(not(target_arch = "wasm32"))]
+fn posix_time_tag() -> Option<String> {
     for key in ["LC_TIME", "LC_ALL", "LANG"] {
         if let Ok(value) = std::env::var(key) {
             let value = value.trim();
@@ -55,6 +68,29 @@ fn unix_time_tag() -> Option<String> {
         }
     }
     None
+}
+
+/// The locale the platform formats dates in: on Windows the user's Region › Formats choice
+/// (the same setting `GetUserDefaultLocaleName` reads), which is separate from the display
+/// language; elsewhere what `sys-locale` reports.
+#[cfg(not(target_arch = "wasm32"))]
+fn platform_time_tag() -> Option<String> {
+    #[cfg(windows)]
+    if let Some(tag) = windows_format_locale() {
+        return Some(tag);
+    }
+    sys_locale::get_locale()
+}
+
+/// The Windows user locale used for formats (`HKCU\Control Panel\International\LocaleName`).
+/// The display language is another setting: an English Windows with Swedish formats must date
+/// its files in Swedish.
+#[cfg(windows)]
+fn windows_format_locale() -> Option<String> {
+    let key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey(r"Control Panel\International").ok()?;
+    let name: String = key.get_value("LocaleName").ok()?;
+    let name = name.trim().to_string();
+    (!name.is_empty()).then_some(name)
 }
 
 /// The locale tag (`sv-SE.UTF-8`, `zh_Hant_TW`, `en_GB@euro`, …) as a chrono locale. Chinese
@@ -99,6 +135,22 @@ mod tests {
         assert_eq!(locale("en"), None, "no region: never guess a country");
         assert_eq!(locale("C"), None);
         assert_eq!(locale("not a locale"), None);
+    }
+
+    /// The date pattern follows the system's own region format. A shell's `LANG` must never win
+    /// on Windows, where it is the shell's and not the user's (Git Bash and MSYS export
+    /// `en_US.UTF-8` on a Swedish machine, which read as US dates).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_windows_shell_language_never_decides_the_date_pattern() {
+        let shell = Some("en_US.UTF-8".to_string());
+        let region = Some("sv-SE".to_string());
+        assert_eq!(tag_from(false, shell.clone(), region.clone()), region, "the Region setting decides");
+        assert_eq!(tag_from(false, shell, None), None, "no platform answer: ISO 8601, not the shell's tag");
+        // Unix keeps its locale in the POSIX variables, so there they do decide.
+        assert_eq!(tag_from(true, Some("en_GB.UTF-8".to_string()), region.clone()), Some("en_GB.UTF-8".to_string()));
+        // A macOS app started from Finder has no POSIX variable: its system locale is used.
+        assert_eq!(tag_from(true, None, region), Some("sv-SE".to_string()));
     }
 
     #[test]
