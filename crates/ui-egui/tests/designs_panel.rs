@@ -130,6 +130,42 @@ fn the_panel_lists_a_repository_and_makes_a_folder() {
 }
 
 #[test]
+fn thumbnails_off_gives_one_compact_line_per_row() {
+    // The optional compact list: one line per folder or file, with an icon for its kind, and
+    // neither dates nor version selectors (those belong to the picture rows).
+    let mut h = panel();
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "designs.folder_new", "params": { "path": "$DIR/Brackets" } } },
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/plate.solidcraft" } } },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } },
+        { "until": { "count": { "name": "designs:designs", "value": 1 } } }
+    ]))
+    .unwrap();
+    h.frames(2);
+    assert!(solidcraft_ui_egui::scenario::handle_at("designs:versions:plate").is_some(), "the picture row lost its version selector");
+
+    h.app.preferences.designs_thumbnails = false;
+    h.frames(2);
+    h.run(&json!([{ "expect": { "count": { "name": "designs:thumbnails_on", "value": 0 } } }])).unwrap();
+    assert!(solidcraft_ui_egui::scenario::handle_at("designs:versions:plate").is_none(), "the compact row kept its version selector");
+    // One line means one line: the row is short, and only the name is written in it (no date,
+    // no "Folder" tag).
+    for (name, expected) in [("plate", "plate"), ("Brackets", "Brackets")] {
+        let row = solidcraft_ui_egui::scenario::rect_of(&format!("designs:row:{name}")).expect("the row was drawn");
+        assert!(row.height() <= 28.0, "{name} is {:.0} pt tall in the compact list", row.height());
+        let texts: Vec<String> = h
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if row.contains(text.pos) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec![expected.to_string()], "{name}: {texts:?}");
+    }
+}
+
+#[test]
 fn the_panel_actions_are_buttons_and_not_text_labels() {
     // The panel's own fill is the header tone, which egui uses for an idle button: a plain
     // `ui.button` here would paint invisible chrome and read as a label. The actions must show
