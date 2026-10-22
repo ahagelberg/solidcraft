@@ -36,7 +36,10 @@
   and projects) are listed beside the designs with an icon for their kind: double-click one to
   open it as a new design (a board through its import settings), drag it
   into an open design to place it, or right-click it for the same menu (Insert, Rename, Move…,
-  Delete, Show in Folder) the designs have. **Save** and **Save As** then use the repository's own
+  Copy To…, Duplicate, New Folder Inside…, Delete, Show in Folder) the designs have. **Move** and
+  **Copy To** open the panel's own folder window, which walks the repositories and never leaves
+  them (the repository it starts on is the design's own); **Duplicate** makes a second copy beside
+  it, named `<name> copy`. **Show in Folder** selects the file in the system's file manager. **Save** and **Save As** then use the repository's own
   dialog instead of the system one: it opens on the folder the panel shows, walks the repository's
   folders (and can make a new one), and cannot write anywhere outside the repository. A name
   already taken asks before it replaces the file, and **Plain JSON** saves a `.json` design rather

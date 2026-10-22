@@ -280,21 +280,40 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
         agent_http: Some(std::sync::Arc::new(agent_http)),
         secrets: Some(std::sync::Arc::new(Keychain)),
         show_in_folder: Some(Box::new(|path| {
-            let folder = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("."));
-            let mut command = std::process::Command::new(if cfg!(target_os = "windows") {
-                "explorer"
-            } else if cfg!(target_os = "macos") {
-                "open"
-            } else {
-                "xdg-open"
-            });
-            command.arg(folder);
+            // The file is not only shown in a folder: it is selected there, the way a file
+            // manager does it (Windows Explorer, the Mac's Finder, the free desktop's file
+            // manager through its ShowItems call, with its folder as the fallback).
+            let file = std::path::Path::new(path);
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
-                command.creation_flags(0x08000000);
+                let _ = std::process::Command::new("explorer").arg(format!("/select,{}", file.display())).creation_flags(0x08000000).spawn();
             }
-            let _ = command.spawn();
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg("-R").arg(file).spawn();
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                let uri = format!("file://{}", file.display());
+                let shown = std::process::Command::new("dbus-send")
+                    .args([
+                        "--session",
+                        "--type=method_call",
+                        "--dest=org.freedesktop.FileManager1",
+                        "/org/freedesktop/FileManager1",
+                        "org.freedesktop.FileManager1.ShowItems",
+                    ])
+                    .arg(format!("array:string:{uri}"))
+                    .arg("string:")
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if !shown {
+                    let folder = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+                    let _ = std::process::Command::new("xdg-open").arg(folder).spawn();
+                }
+            }
         })),
     }
 }

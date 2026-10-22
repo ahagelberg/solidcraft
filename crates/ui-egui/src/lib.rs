@@ -28,6 +28,8 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod designs_folder;
+pub mod designs_new_folder;
 pub mod designs_panel;
 pub mod designs_properties;
 pub mod designs_repositories;
@@ -502,6 +504,10 @@ pub struct SolveApp {
     pub designs: designs_panel::State,
     /// The repository's own Save As window, when it is open.
     pub save_to_repo: Option<designs_save::Dialog>,
+    /// The Move/Copy window (a folder in any repository), when it is open.
+    pub designs_pick: Option<designs_folder::Pick>,
+    /// The New Folder window, when it is open.
+    pub new_folder_dialog: Option<designs_new_folder::Dialog>,
     /// The KiCad import settings window, when a board was chosen.
     pub kicad_import: Option<kicad_import_dialog::Dialog>,
     /// A version question waiting for its answer (opening an old version, saving over later ones).
@@ -619,6 +625,8 @@ impl SolveApp {
             flat_view: Default::default(),
             designs: designs_panel::State::default(),
             save_to_repo: None,
+            designs_pick: None,
+            new_folder_dialog: None,
             kicad_import: None,
             version_prompt: None,
             save_discards_later: false,
@@ -1592,6 +1600,8 @@ impl SolveApp {
         open_meshing::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         designs_save::show(self, ui.ctx());
+        designs_folder::show(self, ui.ctx());
+        designs_new_folder::show(self, ui.ctx());
         designs_versions::show(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
