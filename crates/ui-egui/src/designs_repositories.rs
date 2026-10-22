@@ -33,17 +33,23 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.checkbox(&mut app.preferences.repositories_panel, use_label.as_str());
     ui.label(RichText::new(use_note).size(11.0).color(t.text_dim));
     ui.add_space(6.0);
-    // Pictures or one compact line per row: the same choice the panel's own button makes.
-    let thumbnails_label = app.tr("designs.thumbnails").to_string();
-    let thumbnails_note = app.tr("designs.thumbnails_note").to_string();
-    ui.checkbox(&mut app.preferences.designs_thumbnails, thumbnails_label.as_str());
-    ui.label(RichText::new(thumbnails_note).size(11.0).color(t.text_dim));
-    ui.add_space(6.0);
     // A tree of the repository, or one folder at a time: the panel's own second button.
     let tree_label = app.tr("designs.tree").to_string();
     let tree_note = app.tr("designs.tree_note").to_string();
     ui.checkbox(&mut app.preferences.designs_tree, tree_label.as_str());
     ui.label(RichText::new(tree_note).size(11.0).color(t.text_dim));
+    ui.add_space(6.0);
+    // Pictures or one compact line per row: the same choice the panel's own button makes. The
+    // tree draws one line per row, so pictures have nothing to show there: this is dimmed while
+    // the tree is on, and comes back as it was when the tree is turned off.
+    let thumbnails_label = app.tr("designs.thumbnails").to_string();
+    let thumbnails_note = app.tr("designs.thumbnails_note").to_string();
+    let tree = app.preferences.designs_tree;
+    let note_color = if tree { t.text_dim.gamma_multiply(0.5) } else { t.text_dim };
+    ui.add_enabled_ui(!tree, |ui| {
+        ui.checkbox(&mut app.preferences.designs_thumbnails, thumbnails_label.as_str());
+        ui.label(RichText::new(thumbnails_note).size(11.0).color(note_color));
+    });
     ui.add_space(10.0);
 
     // Take the list out while it is edited: the page needs `app` for labels, the picker and the

@@ -851,6 +851,8 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
 /// How tall a row is: a picture with its two lines, or one compact line (thumbnails off).
 const ROW_PICTURE: f32 = 54.0;
 const ROW_COMPACT: f32 = 26.0;
+/// A tree row: shorter than a list row, and drawn without a gap, so the tree reads as one column.
+const ROW_TREE: f32 = 21.0;
 
 /// The compact row's icon: one clear mark for a folder and for each kind of file, so a folder
 /// never looks like a design and the importers stay apart. There is no dedicated mesh or board
@@ -919,8 +921,9 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     let mut actions = Vec::new();
     let mut toggle = None;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
         for row in &rows {
-            let (rect, response) = row_response(app, ui, &row.path, ROW_COMPACT, true);
+            let (rect, response) = row_response(app, ui, &row.path, ROW_TREE, true);
             crate::scenario::publish_handle(&format!("designs:row:{}", row.name), rect.center());
             crate::scenario::publish_rect(&format!("designs:row:{}", row.name), rect);
             let indent = rect.left() + 10.0 + 14.0 * row.depth as f32;
