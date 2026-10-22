@@ -130,6 +130,30 @@ fn the_panel_lists_a_repository_and_makes_a_folder() {
 }
 
 #[test]
+fn the_panel_actions_are_buttons_and_not_text_labels() {
+    // The panel's own fill is the header tone, which egui uses for an idle button: a plain
+    // `ui.button` here would paint invisible chrome and read as a label. The actions must show
+    // the kit's field face (control fill, control border) like every other button.
+    let mut h = panel();
+    h.frames(2);
+    let t = solidcraft_ui_egui::theme::Tokens::get();
+    for label in ["New Folder", "Refresh"] {
+        let [x, y] = h.widget(label).unwrap_or_else(|| panic!("no {label} button in the actions row"));
+        let face = h.shapes.iter().any(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) => {
+                rect.fill == t.control_fill
+                    && rect.stroke.width == 1.0
+                    && rect.stroke.color == t.control_border
+                    && rect.rect.contains(egui::pos2(x as f32, y as f32))
+            }
+            _ => false,
+        });
+        assert!(face, "{label} has no button face: it is drawn as a plain label");
+    }
+    assert_ne!(t.control_fill, t.panel_header, "the fix relies on buttons not sharing the panel's fill");
+}
+
+#[test]
 fn f2_renames_the_picked_row_like_a_file_browser() {
     let mut h = panel();
     h.run(&json!([

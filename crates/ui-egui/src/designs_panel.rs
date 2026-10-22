@@ -214,6 +214,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .resizable(true)
         .frame(egui::Frame::NONE.fill(t.panel_header).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
+            control_style(ui, &t);
             repository_header(app, ui, &t);
             ui.add_space(4.0);
             actions(app, ui);
@@ -236,6 +237,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     confirm_delete(app, ui.ctx());
     version_menu(app, ui.ctx());
     crate::designs_properties::show(app, ui.ctx());
+}
+
+/// The panel's controls get the kit's field look. Its own fill is the header tone, which egui
+/// also uses for an idle button, so a plain button here would read as a text label.
+fn control_style(ui: &mut egui::Ui, t: &Tokens) {
+    let v = ui.visuals_mut();
+    v.widgets.inactive.weak_bg_fill = t.control_fill;
+    v.widgets.inactive.bg_fill = t.control_fill;
+    for state in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        state.bg_stroke = egui::Stroke::new(1.0, t.control_border);
+        state.corner_radius = t.control_radius.into();
+        state.expansion = 0.0;
+    }
 }
 
 /// F2 over the panel: start renaming the selected row (a design or a folder), the way a file
