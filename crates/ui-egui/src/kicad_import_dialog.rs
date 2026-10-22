@@ -212,6 +212,27 @@ mod tests {
         assert!(!h.app.file_load.busy());
     }
 
+    /// Every way of opening a file goes through the settings window: the app bar's File > Open
+    /// and Ctrl+O too, not only Home, a drop and the command behind the Open button.
+    #[test]
+    fn the_file_menu_and_ctrl_o_open_a_board_through_its_settings() {
+        for by_menu in [true, false] {
+            let mut h = crate::scenario::Harness::new();
+            h.frames(2);
+            h.step(&json!({ "choose_file": "board.kicad_pcb" })).unwrap();
+            if by_menu {
+                h.step(&json!({ "click": { "handle": "appbar:file" } })).unwrap();
+                h.step(&json!({ "widget": "Open…" })).unwrap();
+            } else {
+                h.step(&json!({ "key": "O", "cmd": true })).unwrap();
+            }
+            h.frames(2);
+            let how = if by_menu { "the File menu" } else { "Ctrl+O" };
+            assert!(h.app.kicad_import.is_some(), "{how} skipped the import settings");
+            assert!(!h.app.file_load.busy(), "{how} read the board before its settings were chosen");
+        }
+    }
+
     #[test]
     fn b_rep_copper_is_an_offer_the_window_accepts() {
         let mut d = Dialog::new("board.kicad_pcb");

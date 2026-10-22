@@ -1051,7 +1051,9 @@ fn design_menu(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, ac
 
 fn apply(app: &mut SolveApp, action: Action) {
     match action {
-        Action::Open(path) => app.open_path_async(&path),
+        // A board opens with its import settings, so every Open goes through the same door as
+        // File > Open (and a recent design on Home).
+        Action::Open(path) => app.open_chosen_file(&path),
         Action::OpenVersion { path, version, versions } => {
             // Opening an old version asks first: it is history, not the design as it stands.
             app.version_prompt = Some(crate::designs_versions::Prompt::Open { path, version, versions });
