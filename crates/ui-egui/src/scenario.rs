@@ -91,7 +91,8 @@ pub struct Harness {
     /// The last frame's platform output (with its accessibility tree: dialog widgets are found
     /// by their text there).
     pub output: egui::PlatformOutput,
-    /// The last frame's painted shapes.
+    /// The shapes the last frame painted, so a test can check what a control looks like (its
+    /// fill and stroke), not only where it is.
     pub shapes: Vec<egui::epaint::ClippedShape>,
     /// Files the scenario saves and opens live here; file pickers answer from it.
     pub dir: PathBuf,
@@ -227,6 +228,7 @@ impl Harness {
         });
         out.textures_delta.clear();
         self.output = out.platform_output;
+        self.shapes = out.shapes;
     }
 
     /// Frames until the queued input is used up (and the view has settled).
