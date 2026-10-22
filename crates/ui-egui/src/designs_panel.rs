@@ -60,6 +60,14 @@ pub struct State {
     pub properties: Option<crate::designs_properties::Properties>,
     /// A version's own menu (right-clicked in the version list).
     version_menu: Option<VersionMenu>,
+    /// The tree view's open folders (the repository root included) and their listings: a folder
+    /// is read when it is opened, so the whole repository is never listed at once.
+    tree: std::collections::BTreeSet<String>,
+    tree_entries: HashMap<String, Entries>,
+    tree_listing: Option<(String, Receiver<Value>)>,
+    /// The tree row clicked last, and when: a second click on it opens or closes it, the way a
+    /// file browser does.
+    tree_click: Option<(String, f64)>,
 }
 
 /// A version's menu: which version, of how many, and where it was asked for.
@@ -218,10 +226,16 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             repository_header(app, ui, &t);
             ui.add_space(4.0);
             actions(app, ui);
-            ui.add_space(4.0);
-            breadcrumb(app, ui);
-            ui.separator();
-            rows(app, ui, &t);
+            if app.preferences.designs_tree {
+                ui.add_space(2.0);
+                ui.separator();
+                tree_rows(app, ui, &t);
+            } else {
+                ui.add_space(4.0);
+                breadcrumb(app, ui);
+                ui.separator();
+                rows(app, ui, &t);
+            }
         });
     let rect = panel.response.rect;
     crate::scenario::publish_rect("designs:panel", rect);
@@ -266,14 +280,17 @@ pub fn rename_selected(app: &mut SolveApp, ctx: &egui::Context) -> bool {
         return true;
     }
     let Some(path) = app.designs.selected.clone() else { return true };
-    let Some(entries) = &app.designs.entries else { return true };
-    let name = entries
-        .folders
-        .iter()
-        .map(|f| (&f.path, &f.name))
-        .chain(entries.designs.iter().map(|d| (&d.path, &d.name)))
-        .find(|(p, _)| p.as_str() == path)
-        .map(|(_, name)| name.clone());
+    let from_flat = app
+        .designs
+        .entries
+        .as_ref()
+        .map(|entries| entries.folders.iter().map(|f| (&f.path, &f.name)).chain(entries.designs.iter().map(|d| (&d.path, &d.name))));
+    let from_tree = app
+        .designs
+        .tree_entries
+        .values()
+        .flat_map(|entries| entries.folders.iter().map(|f| (&f.path, &f.name)).chain(entries.designs.iter().map(|d| (&d.path, &d.name))));
+    let name = from_flat.into_iter().flatten().chain(from_tree).find(|(p, _)| p.as_str() == path).map(|(_, name)| name.clone());
     if let Some(name) = name {
         app.designs.rename = Some(Rename { path, name, select_all: true });
     }
@@ -323,6 +340,9 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
         app.designs.selected = None;
         app.designs.error = None;
         app.designs.failed = None;
+        // The tree belongs to a repository: another one starts collapsed again.
+        app.designs.tree.clear();
+        app.designs.tree_entries.clear();
     }
     if path.is_empty() {
         app.designs.current = None;
@@ -378,8 +398,12 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
     let shown = app.designs.current.clone().unwrap_or(path);
     let shown_text = shown.to_string_lossy().into_owned();
     // A folder that could not be read is not listed again on its own: its message stays until the
-    // user tries again or goes elsewhere.
-    if app.designs.entries.is_none() && app.designs.listing.is_none() && app.designs.failed.as_deref() != Some(shown_text.as_str()) {
+    // user tries again or goes elsewhere. The tree view lists the folders it opens instead.
+    if !app.preferences.designs_tree
+        && app.designs.entries.is_none()
+        && app.designs.listing.is_none()
+        && app.designs.failed.as_deref() != Some(shown_text.as_str())
+    {
         start_listing(app, &shown, ctx);
     }
 }
@@ -455,7 +479,8 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
                 app.designs.error = None;
                 app.designs.failed = None;
                 app.designs.current = Some(PathBuf::from(&entries.path));
-                app.designs.thumb_rx = if app.preferences.designs_thumbnails { start_thumbnails(&entries) } else { None };
+                app.designs.thumb_rx =
+                    if app.preferences.designs_thumbnails && !app.preferences.designs_tree { start_thumbnails(&entries) } else { None };
                 app.designs.entries = Some(entries);
             }
         }
@@ -494,9 +519,26 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
         }
     }
     // Pictures are turned back on, or a listing arrived while they were off: fetch them now.
-    let waiting = app.designs.thumb_rx.is_none() && app.designs.thumbnails.is_empty() && app.preferences.designs_thumbnails;
+    let waiting =
+        app.designs.thumb_rx.is_none() && app.designs.thumbnails.is_empty() && app.preferences.designs_thumbnails && !app.preferences.designs_tree;
     if waiting && let Some(entries) = app.designs.entries.clone() {
         app.designs.thumb_rx = start_thumbnails(&entries);
+    }
+    // A folder the tree opened: its rows are drawn as soon as it is read.
+    let tree = app.designs.tree_listing.as_ref().and_then(|(path, rx)| match rx.try_recv() {
+        Ok(value) => Some((path.clone(), Some(value))),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some((path.clone(), None)),
+    });
+    if let Some((path, value)) = tree {
+        app.designs.tree_listing = None;
+        let entries = value.and_then(|v| if v.get("error").is_some() { None } else { Entries::from_json(&v) });
+        // A folder that cannot be read stays shut instead of being asked for again every frame.
+        app.designs
+            .tree_entries
+            .insert(path.clone(), entries.unwrap_or(Entries { path, folders: Vec::new(), designs: Vec::new(), truncated: false }));
+    } else if app.designs.tree_listing.is_some() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
 }
 
@@ -693,22 +735,37 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.designs.failed = None;
             app.designs.created = None;
         }
-        // Pictures or one compact line per row, toggled where the rows are.
+        // Pictures or one compact line per row, toggled where the rows are; the tree is always
+        // one line, so its own button takes the pictures button's place there.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let t = Tokens::get();
-            let pictures = app.preferences.designs_thumbnails;
-            let (icon, tip) = if pictures { ("grid", "designs.thumbnails_hide") } else { ("list", "designs.thumbnails") };
-            let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
-            if response.hovered() || response.has_focus() {
-                ui.painter().rect_filled(rect, 4.0, t.hover);
+            let tree = app.preferences.designs_tree;
+            if view_button(ui, &t, "designs:view:tree", "folder", if tree { "designs.tree_hide" } else { "designs.tree" }) {
+                app.preferences.designs_tree = !tree;
+                // Another view starts collapsed, as it does when the panel opens.
+                app.designs.tree.clear();
+                app.designs.tree_entries.clear();
             }
-            crate::icons::paint_on(ui.painter(), rect.shrink(4.0), icon, Some(crate::theme::is_dark()), 1.0);
-            crate::scenario::publish_handle("designs:thumbnails", rect.center());
-            if response.on_hover_text(crate::i18n::tr(tip)).clicked() {
-                app.preferences.designs_thumbnails = !pictures;
+            if !tree {
+                let pictures = app.preferences.designs_thumbnails;
+                let (icon, tip) = if pictures { ("grid", "designs.thumbnails_hide") } else { ("list", "designs.thumbnails") };
+                if view_button(ui, &t, "designs:view:pictures", icon, tip) {
+                    app.preferences.designs_thumbnails = !pictures;
+                }
             }
         });
     });
+}
+
+/// One of the panel's own view buttons: a small icon that toggles a way of showing the rows.
+fn view_button(ui: &mut egui::Ui, t: &Tokens, key: &str, icon: &str, tip: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 4.0, t.hover);
+    }
+    crate::icons::paint_on(ui.painter(), rect.shrink(4.0), icon, Some(crate::theme::is_dark()), 1.0);
+    crate::scenario::publish_handle(key, rect.center());
+    response.on_hover_text(crate::i18n::tr(tip)).clicked()
 }
 
 fn create_folder(app: &mut SolveApp, name: &str) {
@@ -814,10 +871,172 @@ fn draw_kind_icon(ui: &egui::Ui, rect: egui::Rect, kind: &str) {
     crate::icons::paint(ui.painter(), mark, kind_icon(kind), t.icon, t.icon_fill, t.icon);
 }
 
-fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, height: f32) -> (egui::Rect, egui::Response) {
+/// A row of the tree view: a folder, a design or an importable file, at some depth.
+#[derive(Clone)]
+struct TreeRow {
+    path: String,
+    name: String,
+    folder: bool,
+    kind: String,
+    depth: usize,
+}
+
+/// How deep the tree goes before it stops: a hostile or looping folder structure cannot make
+/// the panel recurse without end.
+const TREE_DEPTH_MAX: usize = 32;
+
+/// The tree view: the repository root and, under it, the folders that were opened, one line
+/// each, indented by depth. A folder is read when it is opened, never the whole repository at
+/// once; everything starts collapsed.
+fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
+    let Some(repository) = active_repository(app) else {
+        ui.label(RichText::new(crate::i18n::tr("designs.no_repositories")).size(12.0).color(t.text_dim));
+        return;
+    };
+    if repository.path.is_empty() {
+        ui.label(RichText::new(crate::i18n::tr("designs.choose_folder")).size(12.0).color(t.text_dim));
+        return;
+    }
+    let (root, root_name) = (repository.path.clone(), repository.name.clone());
+    // A root that could not be made or read says so here too, not as an empty tree.
+    if let Some(error) = &app.designs.error
+        && app.designs.root_check.is_none()
+        && app.designs.tree_entries.is_empty()
+    {
+        ui.label(RichText::new(crate::i18n::tr("designs.unavailable")).size(12.5).color(t.error));
+        ui.label(RichText::new(plain(error)).size(11.0).color(t.text_dim));
+        ui.add_space(4.0);
+    }
+    // An action asked for a fresh tree (a new folder, a rename, Refresh): read the open folders
+    // again, keeping which ones are open.
+    if std::mem::take(&mut app.designs.refresh) {
+        app.designs.tree_entries.clear();
+    }
+    tree_request(app, ui.ctx());
+    let rows = tree_layout(&app.designs.tree, &app.designs.tree_entries, &root, &root_name);
+    crate::scenario::publish_count("designs:tree_rows", rows.len() as f64);
+    crate::scenario::publish_count("designs:tree_loaded", app.designs.tree_entries.len() as f64);
+    let mut actions = Vec::new();
+    let mut toggle = None;
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        for row in &rows {
+            let (rect, response) = row_response(app, ui, &row.path, ROW_COMPACT, true);
+            crate::scenario::publish_handle(&format!("designs:row:{}", row.name), rect.center());
+            crate::scenario::publish_rect(&format!("designs:row:{}", row.name), rect);
+            let indent = rect.left() + 10.0 + 14.0 * row.depth as f32;
+            if row.folder {
+                let open = app.designs.tree.contains(&row.path);
+                let ink = if response.hovered() { t.text } else { t.text_dim };
+                crate::ui_kit::disclosure(ui.painter(), pos2(indent, rect.center().y), open, ink);
+                // The disclosure itself opens and closes, as in a file browser.
+                let hit = egui::Rect::from_center_size(pos2(indent, rect.center().y), vec2(16.0, 16.0));
+                crate::scenario::publish_handle(&format!("designs:tree-toggle:{}", row.name), hit.center());
+                if ui.interact(hit, ui.id().with(("designs-tree", row.path.as_str())), Sense::click()).clicked() {
+                    toggle = Some(row.path.clone());
+                }
+            }
+            let mark = egui::Rect::from_center_size(pos2(indent + 16.0, rect.center().y), vec2(16.0, 16.0));
+            crate::icons::paint(ui.painter(), mark, if row.folder { "folder" } else { kind_icon(&row.kind) }, t.icon, t.icon_fill, t.icon);
+            let text = egui::Rect::from_min_max(pos2(indent, rect.top()), rect.max);
+            row_text(app, ui, text, &row.path, &row.name, None);
+            if response.clicked() {
+                // The second click on a row opens or closes it, as in a file browser (a folder
+                // elsewhere in the panel is entered on a double click).
+                let now = ui.input(|i| i.time);
+                let again = app.designs.tree_click.as_ref().is_some_and(|(p, t)| p == &row.path && now - t <= 0.45);
+                app.designs.tree_click = (!again).then(|| (row.path.clone(), now));
+                if row.folder {
+                    // The folder picked is where a new one goes.
+                    app.designs.current = Some(PathBuf::from(&row.path));
+                }
+                if again {
+                    if row.folder {
+                        toggle = Some(row.path.clone());
+                    } else {
+                        actions.push(Action::Open(row.path.clone()));
+                    }
+                }
+            }
+            let (path, name) = (row.path.clone(), row.name.clone());
+            if row.folder {
+                response.context_menu(|ui| folder_menu(app, ui, &path, &name, &mut actions));
+            } else {
+                response.context_menu(|ui| design_menu(app, ui, &path, &name, &mut actions));
+            }
+        }
+    });
+    if let Some(path) = toggle
+        && !app.designs.tree.remove(&path)
+    {
+        app.designs.tree.insert(path);
+    }
+    for action in actions {
+        apply(app, action);
+    }
+}
+
+/// The visible rows: the root, then each open folder's folders and designs in turn.
+fn tree_layout(tree: &std::collections::BTreeSet<String>, entries: &HashMap<String, Entries>, root: &str, root_name: &str) -> Vec<TreeRow> {
+    let mut rows = vec![TreeRow { path: root.to_string(), name: root_name.to_string(), folder: true, kind: "folder".into(), depth: 0 }];
+    if tree.contains(root) {
+        tree_children(&mut rows, tree, entries, root, 1);
+    }
+    rows
+}
+
+fn tree_children(rows: &mut Vec<TreeRow>, tree: &std::collections::BTreeSet<String>, entries: &HashMap<String, Entries>, parent: &str, depth: usize) {
+    if depth > TREE_DEPTH_MAX {
+        return;
+    }
+    let Some(listing) = entries.get(parent) else { return };
+    for folder in &listing.folders {
+        rows.push(TreeRow { path: folder.path.clone(), name: folder.name.clone(), folder: true, kind: "folder".into(), depth });
+        if tree.contains(&folder.path) {
+            tree_children(rows, tree, entries, &folder.path, depth + 1);
+        }
+    }
+    for design in &listing.designs {
+        rows.push(TreeRow { path: design.path.clone(), name: design.name.clone(), folder: false, kind: design.kind.clone(), depth });
+    }
+}
+
+/// Ask for the contents of one open folder that is not listed yet, off the window thread: one
+/// folder at a time, so a slow or network folder never holds the window.
+fn tree_request(app: &mut SolveApp, ctx: &egui::Context) {
+    if app.designs.tree_listing.is_some() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        return;
+    }
+    let Some(path) = app.designs.tree.iter().find(|p| !app.designs.tree_entries.contains_key(*p)).cloned() else { return };
+    let (tx, rx) = mpsc::channel();
+    let worker_path = path.clone();
+    let spawned = std::thread::Builder::new().name("designs-tree".into()).spawn(move || {
+        let result = std::panic::catch_unwind(|| solidcraft_engine::cmd::designs::list(&worker_path));
+        let value = match result {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => json!({ "error": e.to_string() }),
+            Err(_) => json!({ "error": "the folder could not be listed" }),
+        };
+        let _ = tx.send(value);
+    });
+    match spawned {
+        Ok(_) => app.designs.tree_listing = Some((path, rx)),
+        Err(_) => {
+            // Nothing to retry with: the row stays shut, and the panel says why.
+            app.set_status(crate::i18n::tr("designs.list_failed"), true);
+            app.designs.tree_entries.insert(path, Entries { path: String::new(), folders: Vec::new(), designs: Vec::new(), truncated: false });
+        }
+    }
+    ctx.request_repaint_after(std::time::Duration::from_millis(50));
+}
+
+fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, height: f32, plain: bool) -> (egui::Rect, egui::Response) {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click_and_drag());
     let selected = app.designs.selected.as_deref() == Some(path);
-    ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().field);
+    // The flat list's rows are cards on the panel; a tree row is bare, so indentation reads.
+    if !plain {
+        ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().field);
+    }
     if selected {
         ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().accent_soft);
     } else if response.hovered() {
@@ -911,7 +1130,7 @@ fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str,
 
 fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &FolderRow, actions: &mut Vec<Action>, thumbnails: bool) {
     let height = if thumbnails { ROW_PICTURE } else { ROW_COMPACT };
-    let (rect, response) = row_response(app, ui, &folder.path, height);
+    let (rect, response) = row_response(app, ui, &folder.path, height, false);
     crate::scenario::publish_handle(&format!("designs:row:{}", folder.name), rect.center());
     crate::scenario::publish_rect(&format!("designs:row:{}", folder.name), rect);
     let sub = if folder.description.is_empty() { crate::i18n::tr("designs.folder_label").to_string() } else { folder.description.clone() };
@@ -932,7 +1151,7 @@ fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &Folde
 
 fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &DesignRow, actions: &mut Vec<Action>, thumbnails: bool) {
     let height = if thumbnails { ROW_PICTURE } else { ROW_COMPACT };
-    let (rect, response) = row_response(app, ui, &design.path, height);
+    let (rect, response) = row_response(app, ui, &design.path, height, false);
     crate::scenario::publish_handle(&format!("designs:row:{}", design.name), rect.center());
     crate::scenario::publish_rect(&format!("designs:row:{}", design.name), rect);
     if response.drag_started() {
@@ -1121,7 +1340,18 @@ fn design_menu(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, ac
 
 fn apply(app: &mut SolveApp, action: Action) {
     match action {
-        Action::Open(path) => app.open_path_async(&path),
+        // A folder opens in place in the tree, and is walked into one folder at a time otherwise.
+        Action::Open(path) => {
+            if Path::new(&path).is_dir() {
+                if app.preferences.designs_tree {
+                    app.designs.tree.insert(path);
+                } else {
+                    navigate(app, PathBuf::from(path));
+                }
+            } else {
+                app.open_path_async(&path);
+            }
+        }
         Action::OpenVersion { path, version, versions } => {
             // Opening an old version asks first: it is history, not the design as it stands.
             app.version_prompt = Some(crate::designs_versions::Prompt::Open { path, version, versions });
