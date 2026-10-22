@@ -145,6 +145,9 @@ pub struct Harness {
     /// The last frame's platform output (with its accessibility tree: dialog widgets are found
     /// by their text there).
     pub output: egui::PlatformOutput,
+    /// The shapes the last frame painted, so a test can check what a control looks like (its
+    /// fill and stroke), not only where it is.
+    pub shapes: Vec<egui::epaint::ClippedShape>,
     /// Files the scenario saves and opens live here; file pickers answer from it.
     pub dir: PathBuf,
     /// The file the next Open picker returns (a `choose_file` step).
@@ -182,6 +185,7 @@ impl Harness {
                 ctx
             },
             output: Default::default(),
+            shapes: Vec::new(),
             dir: scratch_dir(),
             next_file: Rc::new(RefCell::new(None)),
             queue: None,
@@ -229,6 +233,7 @@ impl Harness {
         // Nothing is painted: drop the frame's texture changes.
         out.textures_delta.clear();
         self.output = out.platform_output;
+        self.shapes = out.shapes;
     }
 
     pub fn frames(&mut self, n: usize) {
@@ -263,6 +268,7 @@ impl Harness {
         });
         out.textures_delta.clear();
         self.output = out.platform_output;
+        self.shapes = out.shapes;
     }
 
     /// Frames until the queued input is used up (and the view has settled).
