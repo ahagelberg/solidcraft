@@ -594,6 +594,9 @@ preference_settings! {
     /// Show each folder and design as a picture in the Designs panel. Off: one compact line per
     /// row, with an icon for its kind, and no dates or version selector (a narrow browser).
     designs_thumbnails: bool = true, PAGE_REPOSITORIES;
+    /// Browse the repository as a tree (its root and the folders opened under it) instead of one
+    /// folder at a time. Off: the panel walks into one folder at a time.
+    designs_tree: bool = false, PAGE_REPOSITORIES;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
