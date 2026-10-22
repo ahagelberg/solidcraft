@@ -1,5 +1,5 @@
-//! Project folders and the designs in them: browsing, creating, renaming, moving and deleting,
-//! and their metadata (description and custom thumbnail).
+//! Project folders and the designs in them: browsing, creating, renaming, moving, copying and
+//! deleting, and their metadata (description and custom thumbnail).
 //!
 //! These commands work on the file system the user pointed the Designs panel at. They never
 //! touch the open design, and none is undoable: a file operation cannot be undone. Paths are
@@ -36,6 +36,16 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .doc_only()
         .params("path: a design file or a folder; destination: an existing absolute folder -> {path, old_path}"),
+    CommandSpec::new("designs.copy", "Copy To", copy)
+        .icon("copy")
+        .noundo()
+        .doc_only()
+        .params("path: a design file or an importable file; destination: an existing absolute folder -> {path, old_path}. A file of that name there is never replaced"),
+    CommandSpec::new("designs.duplicate", "Duplicate", duplicate)
+        .icon("copy")
+        .noundo()
+        .doc_only()
+        .params("path: a design file or an importable file -> {path, old_path}. The copy is `<name> copy` in the same folder (`copy 2`, `copy 3`, … when that is taken)"),
     CommandSpec::new("designs.delete", "Delete Design", delete)
         .icon("delete")
         .noundo()
@@ -214,6 +224,70 @@ fn move_path(_s: &mut Session, p: &Value) -> Result<Value> {
     std::fs::rename(&path, &target).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))?;
     Ok(json!({ "path": target.to_string_lossy(), "old_path": path.to_string_lossy() }))
 }
+
+/// The file a copy works on: a design or a file SolidCraft can open, never a folder (a folder
+/// carries its own sidecar, and is moved instead).
+fn copy_source(p: &Value, cmd: &str) -> Result<PathBuf> {
+    let path = given_path(p, cmd)?;
+    let meta = std::fs::symlink_metadata(&path).map_err(|e| bad(cmd, format!("{}: {e}", path.display())))?;
+    if !meta.is_file() {
+        return Err(bad(cmd, "only a design or an importable file can be copied; move a folder instead"));
+    }
+    if file_kind(path.to_string_lossy().as_ref()).is_none() {
+        return Err(bad(cmd, "only designs and the files SolidCraft can open can be copied here"));
+    }
+    Ok(path)
+}
+
+fn copy(_s: &mut Session, p: &Value) -> Result<Value> {
+    if cfg!(target_arch = "wasm32") {
+        return Err(unsupported());
+    }
+    let cmd = "designs.copy";
+    let path = copy_source(p, cmd)?;
+    let destination = existing_dir(str_(p, "destination").ok_or_else(|| bad(cmd, "`destination` is required"))?, cmd)?;
+    let Some(name) = path.file_name() else {
+        return Err(bad(cmd, "the path has no name to copy"));
+    };
+    let target = destination.join(name);
+    if target == path {
+        return Err(bad(cmd, "the file is already in that folder; Duplicate makes a second copy"));
+    }
+    if std::fs::symlink_metadata(&target).is_ok() {
+        return Err(bad(cmd, format!("{} is already there", target.display())));
+    }
+    std::fs::copy(&path, &target).map_err(|e| bad(cmd, format!("{}: {e}", target.display())))?;
+    Ok(json!({ "path": target.to_string_lossy(), "old_path": path.to_string_lossy() }))
+}
+
+fn duplicate(_s: &mut Session, p: &Value) -> Result<Value> {
+    if cfg!(target_arch = "wasm32") {
+        return Err(unsupported());
+    }
+    let cmd = "designs.duplicate";
+    let path = copy_source(p, cmd)?;
+    let parent = path.parent().ok_or_else(|| bad(cmd, "the path has no folder to copy it in"))?;
+    let stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| bad(cmd, "the path has no name"))?;
+    let extension = path.extension().and_then(|e| e.to_str()).ok_or_else(|| bad(cmd, "the file has no extension"))?;
+    // `<name> copy`, then `<name> copy 2`, `<name> copy 3`, …: the first free name wins.
+    let mut n = 1u32;
+    let target = loop {
+        let name = if n == 1 { format!("{stem} copy.{extension}") } else { format!("{stem} copy {n}.{extension}") };
+        let candidate = parent.join(name);
+        if std::fs::symlink_metadata(&candidate).is_err() {
+            break candidate;
+        }
+        n += 1;
+        if n > MAX_COPIES {
+            return Err(bad(cmd, "there are too many copies of that file in this folder"));
+        }
+    };
+    std::fs::copy(&path, &target).map_err(|e| bad(cmd, format!("{}: {e}", target.display())))?;
+    Ok(json!({ "path": target.to_string_lossy(), "old_path": path.to_string_lossy() }))
+}
+
+/// How many `<name> copy N` names Duplicate tries before it gives up.
+const MAX_COPIES: u32 = 999;
 
 fn delete(_s: &mut Session, p: &Value) -> Result<Value> {
     if cfg!(target_arch = "wasm32") {
