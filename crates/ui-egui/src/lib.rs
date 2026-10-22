@@ -28,6 +28,7 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod designs_browse;
 pub mod designs_folder;
 pub mod designs_new_folder;
 pub mod designs_panel;
