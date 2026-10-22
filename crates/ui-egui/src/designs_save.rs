@@ -5,8 +5,7 @@
 //! (the breadcrumb never goes above the repository), with the design's name ready to edit and a
 //! choice between the container format and plain JSON. A name already taken asks for Replace.
 
-use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::path::PathBuf;
 
 use egui::{RichText, vec2};
 use serde_json::json;
@@ -14,53 +13,25 @@ use serde_json::json;
 use crate::SolveApp;
 use crate::theme::Tokens;
 
-/// The folders a save dialog lists: more than this and it says nothing is shown (a repository
-/// folder with thousands of subfolders is not a save target anyone can pick from).
-const MAX_FOLDERS: usize = 500;
-
 /// The open Save As window.
 pub struct Dialog {
-    /// The repository's folder: nothing outside it can be saved to.
-    root: PathBuf,
-    /// The repository's name, for the breadcrumb's first link.
-    root_name: String,
-    /// The folder Save writes into.
-    folder: PathBuf,
+    /// The repositories and the folder in one of them (the same browser Move and Copy show).
+    browser: crate::designs_browse::Browser,
     name: String,
     /// Plain JSON instead of the container format.
     json: bool,
     /// The name field still has to select all (it is focused on the first frame).
     select_all: bool,
-    folders: Option<Vec<(String, PathBuf)>>,
-    listing: Option<Receiver<Vec<(String, PathBuf)>>>,
     /// A name that is already taken: the next Save with it replaces the file.
     replace: Option<PathBuf>,
-    /// A new folder being named.
-    new_folder: Option<String>,
-    error: Option<String>,
 }
 
 /// Open it for the open design; false (and nothing opened) when there is no repository to save in,
 /// so the caller falls back to the host's picker.
 pub fn open(app: &mut SolveApp, json: bool) -> bool {
-    let Some(root) = crate::designs_panel::repository_root(app) else { return false };
-    let root_name = crate::designs_panel::active_repository_name(app).unwrap_or_default();
-    let shown = crate::designs_panel::save_folder(app).map(PathBuf::from).filter(|p| p.starts_with(&root) && p.is_dir());
-    let folder = shown.unwrap_or_else(|| root.clone());
-    let name = app.session.doc.name.clone();
-    app.save_to_repo = Some(Dialog {
-        root,
-        root_name,
-        folder,
-        name,
-        json,
-        select_all: true,
-        folders: None,
-        listing: None,
-        replace: None,
-        new_folder: None,
-        error: None,
-    });
+    let start = crate::designs_panel::save_folder(app).map(PathBuf::from);
+    let Some(browser) = crate::designs_browse::Browser::new(app, start.as_deref()) else { return false };
+    app.save_to_repo = Some(Dialog { browser, name: app.session.doc.name.clone(), json, select_all: true, replace: None });
     true
 }
 
@@ -72,7 +43,7 @@ impl Dialog {
         if stem.is_empty() || !is_plain_name(stem) {
             return None;
         }
-        Some(self.folder.join(format!("{stem}.{}", if self.json { "json" } else { solidcraft_engine::io::DESIGN_EXT })))
+        Some(self.browser.folder().join(format!("{stem}.{}", if self.json { "json" } else { solidcraft_engine::io::DESIGN_EXT })))
     }
 
     /// The name as it will be saved, for the "already there" question.
@@ -84,47 +55,16 @@ impl Dialog {
     pub fn asks_to_replace(&self) -> bool {
         self.replace.is_some() && self.replace.as_deref() == self.target().as_deref()
     }
-
-    /// List the subfolders of the folder shown (on a worker thread: a repository may be a network
-    /// folder, and the window must not wait for it).
-    fn sync(&mut self, ctx: &egui::Context) {
-        let received = self.listing.as_ref().and_then(|rx| match rx.try_recv() {
-            Ok(v) => Some(v),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Vec::new()),
-        });
-        if let Some(folders) = received {
-            self.listing = None;
-            self.folders = Some(folders);
-        }
-        if self.folders.is_none() && self.listing.is_none() {
-            self.listing = spawn_listing(&self.folder);
-        }
-        if self.listing.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(50));
-        }
-    }
-
-    /// Go into a folder of the repository (never above its root).
-    fn enter(&mut self, folder: &Path) {
-        if !folder.starts_with(&self.root) || !folder.is_dir() {
-            return;
-        }
-        self.folder = folder.to_path_buf();
-        self.folders = None;
-        self.listing = None;
-        self.replace = None;
-    }
 }
 
 /// The window. Called once per frame while it is open.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.save_to_repo.take() else { return };
-    dialog.sync(ctx);
+    dialog.browser.sync(ctx);
     let t = Tokens::get();
     let mut open = true;
-    let (mut save, mut cancel, mut create) = (false, false, false);
-    let mut browse: Option<PathBuf> = None;
+    let (mut save, mut cancel) = (false, false);
+    let shown = dialog.browser.folder().to_path_buf();
     crate::frame::window(ctx, RichText::new(crate::i18n::tr("designs.save_title")).strong().size(13.0), crate::frame::Width::Normal)
         .id(egui::Id::new("sc_designs_save"))
         .open(&mut open)
@@ -132,67 +72,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .resizable(false)
         .show(ctx, |ui| {
             ui.set_min_width(460.0);
-            // Where it saves: the repository, then its folders down to this one. Only the
-            // repository's own links are offered.
-            ui.horizontal_wrapped(|ui| {
-                if ui.link(RichText::new(&dialog.root_name).size(12.0)).on_hover_text(dialog.root.to_string_lossy()).clicked() {
-                    browse = Some(dialog.root.clone());
-                }
-                let mut path = dialog.root.clone();
-                for part in dialog.folder.strip_prefix(&dialog.root).into_iter().flat_map(|p| p.components()) {
-                    let Component::Normal(part) = part else { continue };
-                    path.push(part);
-                    ui.label(RichText::new(">").size(12.0).color(t.text_dim));
-                    let target = path.clone();
-                    if ui.link(RichText::new(part.to_string_lossy()).size(12.0)).clicked() {
-                        browse = Some(target);
-                    }
-                }
-            });
-            ui.add_space(4.0);
-            // The folders here: a double click (or a click) goes in.
-            ui.group(|ui| {
-                ui.set_width(ui.available_width());
-                egui::ScrollArea::vertical().max_height(140.0).auto_shrink([false, false]).show(ui, |ui| {
-                    let mut shown = 0;
-                    for (name, path) in dialog.folders.iter().flatten() {
-                        shown += 1;
-                        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), egui::Sense::click());
-                        ui.painter().text(
-                            egui::pos2(rect.left() + 8.0, rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            name,
-                            egui::TextStyle::Button.resolve(ui.style()),
-                            t.text,
-                        );
-                        if response.clicked() {
-                            browse = Some(path.clone());
-                        }
-                    }
-                    if shown == 0 {
-                        let text = if dialog.listing.is_some() { "…" } else { crate::i18n::tr("designs.no_folders") };
-                        ui.label(RichText::new(text).size(11.0).color(t.text_dim));
-                    }
-                });
-            });
-            ui.add_space(6.0);
-            if let Some(mut field) = dialog.new_folder.take() {
-                let mut cancelled = false;
-                ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut field).desired_width(180.0).hint_text(crate::i18n::tr("designs.name")));
-                    if ui.button(crate::i18n::tr("designs.create")).clicked() {
-                        create = true;
-                    }
-                    if ui.button("×").on_hover_text(crate::i18n::tr("designs.cancel")).clicked() {
-                        cancelled = true;
-                    }
-                });
-                if !cancelled {
-                    dialog.new_folder = Some(field);
-                }
-            } else if ui.button(crate::i18n::tr("designs.new_folder")).clicked() {
-                dialog.new_folder = Some(String::new());
-            }
+            // The repository, its folders and a new one if wanted: the same browser Move and
+            // Copy show, so a save can also go to another repository.
+            dialog.browser.show(app, ui);
             ui.add_space(4.0);
             let id = egui::Id::new("designs-save-name");
             ui.horizontal(|ui| {
@@ -216,9 +98,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             if let Some(target) = dialog.target() {
                 ui.label(RichText::new(target.to_string_lossy()).size(10.5).color(t.text_dim));
             }
-            if let Some(error) = &dialog.error {
-                ui.label(RichText::new(error).size(11.0).color(t.error));
-            }
             if dialog.asks_to_replace() {
                 let text = crate::i18n::format("designs.save_exists", &[("name", &dialog.file_name())]);
                 ui.label(RichText::new(text).size(11.5).color(t.warning));
@@ -239,21 +118,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
             });
         });
-    if let Some(folder) = browse {
-        dialog.enter(&folder);
-    }
-    if create {
-        let name = dialog.new_folder.clone().unwrap_or_default();
-        let path = dialog.folder.join(name.trim());
-        match app.run("designs.folder_new", json!({ "path": path.to_string_lossy() })) {
-            Ok(_) => {
-                dialog.new_folder = None;
-                dialog.folder = path;
-                dialog.folders = None;
-                dialog.listing = None;
-            }
-            Err(e) => dialog.error = Some(e.to_string()),
-        }
+    // Another folder (or repository) means the replace question was about another file.
+    if dialog.browser.folder() != shown.as_path() {
+        dialog.replace = None;
     }
     if save && let Some(target) = dialog.target() {
         if target.exists() && !dialog.asks_to_replace() {
@@ -267,7 +134,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     cancel = true;
                 }
                 Err(e) => {
-                    dialog.error = Some(e.to_string());
+                    dialog.browser.fail(e.to_string());
                     dialog.replace = None;
                 }
             }
@@ -277,30 +144,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     app.save_to_repo = Some(dialog);
-}
-
-/// A name for a folder, chosen on a worker thread (as the panel lists them).
-fn spawn_listing(folder: &Path) -> Option<Receiver<Vec<(String, PathBuf)>>> {
-    let dir = folder.to_path_buf();
-    let (tx, rx) = mpsc::channel();
-    let spawned = std::thread::Builder::new().name("designs-save-list".into()).spawn(move || {
-        let mut folders: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|entry| {
-                let name = entry.file_name().to_str()?.to_string();
-                if name.starts_with('.') || !entry.file_type().ok()?.is_dir() {
-                    return None;
-                }
-                Some((name, entry.path()))
-            })
-            .collect();
-        folders.sort_by_key(|(name, _)| name.to_lowercase());
-        folders.truncate(MAX_FOLDERS);
-        let _ = tx.send(folders);
-    });
-    spawned.ok().map(|_| rx)
 }
 
 /// The name without the extension the dialog adds: `Part.solidcraft` saves as `Part`.
@@ -327,6 +170,27 @@ fn is_plain_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Save As offers every repository: choosing another one saves there instead.
+    #[test]
+    fn save_as_can_write_into_another_repository() {
+        let mut h = crate::scenario::Harness::new();
+        let (first, second) = (h.dir.join("first"), h.dir.join("second"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        h.app.preferences.repositories = vec![
+            crate::prefs::Repository { id: "a".into(), name: "A".into(), description: String::new(), path: first.to_string_lossy().into_owned() },
+            crate::prefs::Repository { id: "b".into(), name: "B".into(), description: String::new(), path: second.to_string_lossy().into_owned() },
+        ];
+        h.app.preferences.active_repository = "a".into();
+        assert!(open(&mut h.app, false));
+        let dialog = h.app.save_to_repo.as_mut().expect("the Save As window did not open");
+        assert_eq!(dialog.browser.folder(), first, "Save As did not start in the active repository");
+        dialog.browser.choose("b");
+        dialog.name = "Plate".into();
+        let target = dialog.target().expect("no target in the chosen repository");
+        assert_eq!(target, second.join(format!("Plate.{}", solidcraft_engine::io::DESIGN_EXT)));
+    }
 
     #[test]
     fn a_typed_name_cannot_leave_the_folder_it_is_saved_in() {
