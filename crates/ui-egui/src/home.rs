@@ -555,8 +555,7 @@ pub fn open_recent(app: &mut SolveApp, path: &str) {
         app.set_status(format!("{path} is no longer there"), true);
         return;
     }
-    app.home.open = false;
-    app.open_path_async(path);
+    app.open_chosen_file(path);
 }
 
 /// Find out whether the recent files are there: on a thread, so the page never waits on a drive.
@@ -1009,7 +1008,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, action: FileAction) {
         }
         FileAction::Open => app.pick_open(|app, path| {
             if let Some(path) = path {
-                app.open_path_async(&path);
+                app.open_chosen_file(&path);
             }
         }),
         FileAction::Import => {
