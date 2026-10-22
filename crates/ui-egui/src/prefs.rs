@@ -663,6 +663,9 @@ preference_settings! {
     repositories_panel: bool = true, PAGE_REPOSITORIES;
     /// How wide the Designs panel is (dragged by its edge).
     designs_width: f32 = 280.0, PAGE_REPOSITORIES;
+    /// Show each folder and design as a picture in the Designs panel. Off: one compact line per
+    /// row, with an icon for its kind, and no dates or version selector (a narrow browser).
+    designs_thumbnails: bool = true, PAGE_REPOSITORIES;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
