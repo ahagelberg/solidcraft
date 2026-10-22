@@ -165,6 +165,50 @@ fn thumbnails_off_gives_one_compact_line_per_row() {
     }
 }
 
+/// The optional tree view: the repository root, closed at first, and a folder opens in place.
+#[test]
+fn the_tree_starts_collapsed_and_opens_folders_in_place() {
+    let mut h = panel();
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "designs.folder_new", "params": { "path": "$DIR/Brackets" } } },
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/Brackets/inner.solidcraft" } } },
+        { "until": { "count": { "name": "designs:folders", "value": 1 } } }
+    ]))
+    .unwrap();
+    // The panel's own button turns the tree on, and it starts collapsed: only the root shows.
+    h.step(&json!({ "click": { "handle": "designs:view:tree" } })).unwrap();
+    h.run(&json!([
+        { "expect": { "shown_handles": ["designs:row:Test"] } },
+        { "expect": { "count": { "name": "designs:tree_rows", "value": 1 } } }
+    ]))
+    .unwrap();
+    assert!(h.app.preferences.designs_tree);
+    assert!(solidcraft_ui_egui::scenario::handle_at("designs:row:Brackets").is_none(), "the tree did not start collapsed");
+
+    // The disclosure opens the root; a double click on a row opens that folder in place.
+    h.step(&json!({ "click": { "handle": "designs:tree-toggle:Test" } })).unwrap();
+    h.run(&json!([{ "until": { "shown_handles": ["designs:row:Brackets"] } }])).unwrap();
+    h.step(&json!({ "click": { "handle": "designs:row:Brackets" }, "double": true })).unwrap();
+    h.run(&json!([{ "until": { "shown_handles": ["designs:row:inner"] } }])).unwrap();
+
+    // One line per row, each deeper row indented under its parent.
+    for name in ["Brackets", "inner"] {
+        let row = solidcraft_ui_egui::scenario::rect_of(&format!("designs:row:{name}")).expect("the row was drawn");
+        assert!(row.height() <= 28.0, "{name} is {:.0} pt tall in the tree", row.height());
+    }
+    let x = |needle: &str| {
+        h.shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.job.text == needle => Some(text.pos.x),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("`{needle}` was not drawn"))
+    };
+    assert!(x("Brackets") > x("Test") + 5.0, "the folder is not indented under the root");
+    assert!(x("inner") > x("Brackets") + 5.0, "the design is not indented under its folder");
+}
+
 #[test]
 fn the_panel_actions_are_buttons_and_not_text_labels() {
     // The panel's own fill is the header tone, which egui uses for an idle button: a plain
