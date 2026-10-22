@@ -29,6 +29,11 @@ pub struct Dialog {
 /// Open it for the open design; false (and nothing opened) when there is no repository to save in,
 /// so the caller falls back to the host's picker.
 pub fn open(app: &mut SolveApp, json: bool) -> bool {
+    // The switch is off: no repository, so the caller falls back to the host's picker. A browser
+    // would otherwise pick the active repository on its own.
+    if crate::designs_panel::repository_root(app).is_none() {
+        return false;
+    }
     let start = crate::designs_panel::save_folder(app).map(PathBuf::from);
     let Some(browser) = crate::designs_browse::Browser::new(app, start.as_deref()) else { return false };
     app.save_to_repo = Some(Dialog { browser, name: app.session.doc.name.clone(), json, select_all: true, replace: None });
