@@ -455,7 +455,7 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
                 app.designs.error = None;
                 app.designs.failed = None;
                 app.designs.current = Some(PathBuf::from(&entries.path));
-                app.designs.thumb_rx = start_thumbnails(&entries);
+                app.designs.thumb_rx = if app.preferences.designs_thumbnails { start_thumbnails(&entries) } else { None };
                 app.designs.entries = Some(entries);
             }
         }
@@ -492,6 +492,11 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
         } else {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+    }
+    // Pictures are turned back on, or a listing arrived while they were off: fetch them now.
+    let waiting = app.designs.thumb_rx.is_none() && app.designs.thumbnails.is_empty() && app.preferences.designs_thumbnails;
+    if waiting && let Some(entries) = app.designs.entries.clone() {
+        app.designs.thumb_rx = start_thumbnails(&entries);
     }
 }
 
@@ -688,6 +693,21 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.designs.failed = None;
             app.designs.created = None;
         }
+        // Pictures or one compact line per row, toggled where the rows are.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let t = Tokens::get();
+            let pictures = app.preferences.designs_thumbnails;
+            let (icon, tip) = if pictures { ("grid", "designs.thumbnails_hide") } else { ("list", "designs.thumbnails") };
+            let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
+            if response.hovered() || response.has_focus() {
+                ui.painter().rect_filled(rect, 4.0, t.hover);
+            }
+            crate::icons::paint_on(ui.painter(), rect.shrink(4.0), icon, Some(crate::theme::is_dark()), 1.0);
+            crate::scenario::publish_handle("designs:thumbnails", rect.center());
+            if response.on_hover_text(crate::i18n::tr(tip)).clicked() {
+                app.preferences.designs_thumbnails = !pictures;
+            }
+        });
     });
 }
 
@@ -740,19 +760,22 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.label(RichText::new(plain(error)).color(t.error).size(12.0));
         ui.add_space(4.0);
     }
+    let thumbnails = app.preferences.designs_thumbnails;
+    crate::scenario::publish_count("designs:thumbnails_on", if thumbnails { 1.0 } else { 0.0 });
+    let row_height = if thumbnails { ROW_PICTURE } else { ROW_COMPACT };
     let mut actions = Vec::new();
     crate::scenario::publish_count("designs:folders", entries.folders.len() as f64);
     crate::scenario::publish_count("designs:designs", entries.designs.len() as f64);
     let row_count = entries.folders.len() + entries.designs.len();
     let display_count = row_count + usize::from(entries.truncated || row_count == 0);
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, 54.0, display_count, |ui, visible_rows| {
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, row_height, display_count, |ui, visible_rows| {
         for row in visible_rows {
             if let Some(folder) = entries.folders.get(row) {
-                folder_row(app, ui, t, folder, &mut actions);
+                folder_row(app, ui, t, folder, &mut actions, thumbnails);
             } else if let Some(design) = entries.designs.get(row.saturating_sub(entries.folders.len()))
                 && row < row_count
             {
-                design_row(app, ui, t, design, &mut actions);
+                design_row(app, ui, t, design, &mut actions, thumbnails);
             } else if row_count == 0 {
                 ui.label(RichText::new(crate::i18n::tr("designs.empty")).size(12.0).color(t.text_dim));
             } else if entries.truncated {
@@ -768,8 +791,31 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str) -> (egui::Rect, egui::Response) {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 54.0), Sense::click_and_drag());
+/// How tall a row is: a picture with its two lines, or one compact line (thumbnails off).
+const ROW_PICTURE: f32 = 54.0;
+const ROW_COMPACT: f32 = 26.0;
+
+/// The compact row's icon: one clear mark for a folder and for each kind of file, so a folder
+/// never looks like a design and the importers stay apart. There is no dedicated mesh or board
+/// artwork in the set yet: a grey body marks imported geometry, and a drawing sheet a board.
+fn kind_icon(kind: &str) -> &'static str {
+    match kind {
+        "design" => "box",
+        "step" => "import",
+        "mesh" => "body",
+        "kicad" => "dxf",
+        _ => "folder",
+    }
+}
+
+fn draw_kind_icon(ui: &egui::Ui, rect: egui::Rect, kind: &str) {
+    let t = Tokens::get();
+    let mark = egui::Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0));
+    crate::icons::paint(ui.painter(), mark, kind_icon(kind), t.icon, t.icon_fill, t.icon);
+}
+
+fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, height: f32) -> (egui::Rect, egui::Response) {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click_and_drag());
     let selected = app.designs.selected.as_deref() == Some(path);
     ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().field);
     if selected {
@@ -798,10 +844,14 @@ fn draw_picture(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect, path: &str, ico
     }
 }
 
-fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str, name: &str, sub: &str) {
+fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str, name: &str, sub: Option<&str>) {
     let t = crate::theme::Tokens::get();
-    let x = rect.left() + 76.0;
-    let name_rect = egui::Rect::from_min_size(pos2(x, rect.top() + 8.0), vec2(rect.right() - x - 6.0, 18.0));
+    let x = rect.left() + if sub.is_some() { 76.0 } else { 32.0 };
+    let name_rect = if sub.is_some() {
+        egui::Rect::from_min_size(pos2(x, rect.top() + 8.0), vec2(rect.right() - x - 6.0, 18.0))
+    } else {
+        egui::Rect::from_min_max(pos2(x, rect.top() + 2.0), pos2(rect.right() - 6.0, rect.bottom() - 2.0))
+    };
     if app.designs.rename.as_ref().is_some_and(|r| r.path == path) {
         let id = egui::Id::new(("designs-rename", path));
         // Read the keys before the text field consumes them (it is focused from the previous
@@ -847,17 +897,31 @@ fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str,
         return;
     }
     let p = ui.painter().with_clip_rect(egui::Rect::from_min_max(pos2(x, rect.top()), pos2(rect.right() - 4.0, rect.bottom())));
-    p.text(pos2(x, rect.top() + 8.0), egui::Align2::LEFT_TOP, name, egui::FontId::proportional(13.0), t.text);
-    p.text(pos2(x, rect.top() + 28.0), egui::Align2::LEFT_TOP, sub, egui::FontId::proportional(11.0), t.text_dim);
+    match sub {
+        Some(sub) => {
+            p.text(pos2(x, rect.top() + 8.0), egui::Align2::LEFT_TOP, name, egui::FontId::proportional(13.0), t.text);
+            p.text(pos2(x, rect.top() + 28.0), egui::Align2::LEFT_TOP, sub, egui::FontId::proportional(11.0), t.text_dim);
+        }
+        // One line: the name, centred on the row (no dates, no folder tag).
+        None => {
+            p.text(pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(12.5), t.text);
+        }
+    }
 }
 
-fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &FolderRow, actions: &mut Vec<Action>) {
-    let (rect, response) = row_response(app, ui, &folder.path);
+fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &FolderRow, actions: &mut Vec<Action>, thumbnails: bool) {
+    let height = if thumbnails { ROW_PICTURE } else { ROW_COMPACT };
+    let (rect, response) = row_response(app, ui, &folder.path, height);
     crate::scenario::publish_handle(&format!("designs:row:{}", folder.name), rect.center());
     crate::scenario::publish_rect(&format!("designs:row:{}", folder.name), rect);
-    draw_picture(app, ui, rect, &folder.path, "folder");
     let sub = if folder.description.is_empty() { crate::i18n::tr("designs.folder_label").to_string() } else { folder.description.clone() };
-    row_text(app, ui, rect, &folder.path, &folder.name, &sub);
+    if thumbnails {
+        draw_picture(app, ui, rect, &folder.path, "folder");
+        row_text(app, ui, rect, &folder.path, &folder.name, Some(&sub));
+    } else {
+        draw_kind_icon(ui, rect, "folder");
+        row_text(app, ui, rect, &folder.path, &folder.name, None);
+    }
     if response.double_clicked() {
         navigate(app, PathBuf::from(&folder.path));
     }
@@ -866,20 +930,26 @@ fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &Folde
     response.context_menu(|ui| folder_menu(app, ui, &path, &name, actions));
 }
 
-fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &DesignRow, actions: &mut Vec<Action>) {
-    let (rect, response) = row_response(app, ui, &design.path);
+fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &DesignRow, actions: &mut Vec<Action>, thumbnails: bool) {
+    let height = if thumbnails { ROW_PICTURE } else { ROW_COMPACT };
+    let (rect, response) = row_response(app, ui, &design.path, height);
     crate::scenario::publish_handle(&format!("designs:row:{}", design.name), rect.center());
     crate::scenario::publish_rect(&format!("designs:row:{}", design.name), rect);
     if response.drag_started() {
         egui::DragAndDrop::set_payload(ui.ctx(), DesignDrag { path: design.path.clone() });
     }
-    // A design shows its own thumbnail; a file SolidCraft imports has none, so it shows the
-    // importer's icon.
-    let icon = if design.kind == "design" { "box" } else { "import" };
-    draw_picture(app, ui, rect, &design.path, icon);
-    row_text(app, ui, rect, &design.path, &design.name, &design.modified_display);
-    if design.kind == "design" {
-        version_button(ui, rect, design, actions);
+    if thumbnails {
+        // A design shows its own thumbnail; a file SolidCraft imports has none, so it shows the
+        // importer's icon.
+        draw_picture(app, ui, rect, &design.path, kind_icon(&design.kind));
+        row_text(app, ui, rect, &design.path, &design.name, Some(&design.modified_display));
+        if design.kind == "design" {
+            version_button(ui, rect, design, actions);
+        }
+    } else {
+        // One compact line: the kind's icon and the name. No date, no version selector.
+        draw_kind_icon(ui, rect, &design.kind);
+        row_text(app, ui, rect, &design.path, &design.name, None);
     }
     if response.double_clicked() {
         actions.push(Action::Open(design.path.clone()));

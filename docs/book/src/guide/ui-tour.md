@@ -25,8 +25,12 @@
   shows it, and one that cannot be made says so, with the reason and a **Try Again** button. A
   folder opens on a double click and the breadcrumb above walks back out: its house is the
   repository's own folder (the repository's name is in the house's tooltip). **New Folder** makes one.
-  Files SolidCraft can import (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ and glTF) are listed
-  beside the designs with the import icon: double-click one to open it as a new design, drag it
+  The button at the right of that row switches between the pictures and a compact list: one line
+  per folder or file, with an icon for its kind and no dates or version selector (the same switch
+  is **Show thumbnails** in Preferences › Repositories).
+  The files SolidCraft can open (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF, and KiCad boards
+  and projects) are listed beside the designs with an icon for their kind: double-click one to
+  open it as a new design (a board through its import settings), drag it
   into an open design to place it, or right-click it for the same menu (Insert, Rename, Move…,
   Delete, Show in Folder) the designs have. **Save** and **Save As** then use the repository's own
   dialog instead of the system one: it opens on the folder the panel shows, walks the repository's
