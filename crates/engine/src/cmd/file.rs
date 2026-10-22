@@ -886,6 +886,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             "exporter",
             "exporter_up",
             "board_path",
+            "board_solid",
         ] {
             if let Some(v) = r.get(k) {
                 out[k] = v.clone();
