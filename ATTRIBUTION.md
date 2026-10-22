@@ -469,6 +469,7 @@ Original SolidCraft drawings, Open for owner review; no runtime assignments.
 | assets/icons/ui/design/svg/flat/grid.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
 | assets/icons/ui/design/svg/flat/ground_shadow.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
 | assets/icons/ui/design/svg/flat/ambient_occlusion.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
+| assets/icons/ui/design/svg/model/tree.svg | SolidCraft contributors | original icon master (64 grid) | MIT OR Apache-2.0 |
 | assets/icons/ui/design/svg/model/placeholder.svg | SolidCraft contributors | two-tone modelling icon master (64 grid), original SolidCraft artwork | MIT OR Apache-2.0 |
 | assets/icons/ui/design/svg/model/plane.svg | SolidCraft contributors | two-tone modelling icon master (64 grid), original SolidCraft artwork | MIT OR Apache-2.0 |
 | assets/icons/ui/design/svg/model/plane_angle.svg | SolidCraft contributors | two-tone modelling icon master (64 grid), original SolidCraft artwork | MIT OR Apache-2.0 |
