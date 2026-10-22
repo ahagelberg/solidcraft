@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Folder tree</title>
+  <path d="M32 20L32 30L14 30L14 47M32 30L50 30L50 47" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M25 9.5L30 9.5L32 12L39 12Q41 12 41 14L41 18Q41 20 39 20L25 20Q23 20 23 18L23 11.5Q23 9.5 25 9.5Z" fill="#b9ddf8" stroke="#34465b" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M7 46.5L12 46.5L14 49L21 49Q23 49 23 51L23 55Q23 57 21 57L7 57Q5 57 5 55L5 48.5Q5 46.5 7 46.5Z" fill="#e2e8ef" stroke="#34465b" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M43 46.5L48 46.5L50 49L57 49Q59 49 59 51L59 55Q59 57 57 57L43 57Q41 57 41 55L41 48.5Q41 46.5 43 46.5Z" fill="#e2e8ef" stroke="#34465b" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
