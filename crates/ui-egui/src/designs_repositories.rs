@@ -32,6 +32,12 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     // are off, and designs save wherever the picker was.
     ui.checkbox(&mut app.preferences.repositories_panel, use_label.as_str());
     ui.label(RichText::new(use_note).size(11.0).color(t.text_dim));
+    ui.add_space(6.0);
+    // Pictures or one compact line per row: the same choice the panel's own button makes.
+    let thumbnails_label = app.tr("designs.thumbnails").to_string();
+    let thumbnails_note = app.tr("designs.thumbnails_note").to_string();
+    ui.checkbox(&mut app.preferences.designs_thumbnails, thumbnails_label.as_str());
+    ui.label(RichText::new(thumbnails_note).size(11.0).color(t.text_dim));
     ui.add_space(10.0);
 
     // Take the list out while it is edited: the page needs `app` for labels, the picker and the
