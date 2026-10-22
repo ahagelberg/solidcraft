@@ -29,6 +29,8 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod designs_folder;
+pub mod designs_new_folder;
 pub mod designs_panel;
 pub mod designs_properties;
 pub mod designs_repositories;
@@ -519,6 +521,10 @@ pub struct SolveApp {
     pub designs: designs_panel::State,
     /// The repository's own Save As window, when it is open.
     pub save_to_repo: Option<designs_save::Dialog>,
+    /// The Move/Copy window (a folder in any repository), when it is open.
+    pub designs_pick: Option<designs_folder::Pick>,
+    /// The New Folder window, when it is open.
+    pub new_folder_dialog: Option<designs_new_folder::Dialog>,
     /// A version question waiting for its answer (opening an old version, saving over later ones).
     pub version_prompt: Option<designs_versions::Prompt>,
     /// The user agreed to delete the versions after the one being saved.
@@ -637,6 +643,8 @@ impl SolveApp {
             flat_view: Default::default(),
             designs: designs_panel::State::default(),
             save_to_repo: None,
+            designs_pick: None,
+            new_folder_dialog: None,
             version_prompt: None,
             save_discards_later: false,
             home: home::HomeState::default(),
@@ -1669,6 +1677,8 @@ impl SolveApp {
         open_meshing::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         designs_save::show(self, ui.ctx());
+        designs_folder::show(self, ui.ctx());
+        designs_new_folder::show(self, ui.ctx());
         designs_versions::show(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
