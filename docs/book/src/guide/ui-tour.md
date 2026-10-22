@@ -50,7 +50,11 @@ view.
   repository's own folder (the repository's name is in the house's tooltip). **New Folder** makes one.
   The button at the right of that row switches between the pictures and a compact list: one line
   per folder or file, with an icon for its kind and no dates or version selector (the same switch
-  is **Show thumbnails** in Preferences › Repositories).
+  is **Show thumbnails** in Preferences › Repositories). The button beside it shows the repository
+  as a **Folder Tree**: its root, and the folders opened under it, each row one line indented by
+  depth (double-click a row, or click its disclosure, to open or close it). A tree starts
+  collapsed; it reads a folder only when it is opened, so a large or network repository is never
+  listed at once.
   The files SolidCraft can open (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ and glTF) are listed
   beside the designs with an icon for their kind: double-click one to
   open it as a new design, drag it
