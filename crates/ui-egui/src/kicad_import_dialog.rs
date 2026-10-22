@@ -72,12 +72,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut action: Option<&str> = None;
     let mut result = None;
 
-    crate::frame::window(ctx, crate::i18n::tr_label("Import KiCad PCB"), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_kicad_import"))
-        .collapsible(false)
-        .resizable(false)
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_kicad_import"), "import", crate::i18n::tr_label("Import KiCad PCB"))
+        .cards(2.0)
+        .fields()
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
+        .show(ctx, true, |ui| {
             ui.label(crate::i18n::tr_label("The board substrate always comes in, with its cutouts and drilled holes."));
             ui.label(crate::i18n::tr_label("Choose what to build with it:"));
             ui.add_space(6.0);
@@ -144,6 +143,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 result = Some(p);
             }
         });
+    if closed {
+        action = Some("cancel");
+    }
 
     match action {
         Some("import") if dialog.problem().is_none() => {

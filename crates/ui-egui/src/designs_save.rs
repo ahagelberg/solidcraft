@@ -62,15 +62,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.save_to_repo.take() else { return };
     dialog.browser.sync(ctx);
     let t = Tokens::get();
-    let mut open = true;
     let (mut save, mut cancel) = (false, false);
     let shown = dialog.browser.folder().to_path_buf();
-    crate::frame::window(ctx, RichText::new(crate::i18n::tr("designs.save_title")).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_save"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_save"), "save", crate::i18n::tr("designs.save_title"))
+        .cards(2.5)
+        .fields()
+        .show(ctx, true, |ui| {
             ui.set_min_width(460.0);
             // The repository, its folders and a new one if wanted: the same browser Move and
             // Copy show, so a save can also go to another repository.
@@ -140,7 +137,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
         }
     }
-    if !open || cancel {
+    if closed {
+        cancel = true;
+    }
+    if cancel {
         return;
     }
     app.save_to_repo = Some(dialog);

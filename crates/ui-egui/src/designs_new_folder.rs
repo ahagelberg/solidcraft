@@ -34,15 +34,12 @@ pub fn open(app: &mut SolveApp, folder: &str) {
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.new_folder_dialog.take() else { return };
     let t = Tokens::get();
-    let mut open = true;
     let (mut create, mut cancel) = (false, false);
     let title = crate::i18n::format("designs.new_folder_in", &[("name", &dialog.folder_name)]);
-    crate::frame::window(ctx, RichText::new(title).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_new_folder"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_new_folder"), "folder", &title)
+        .cards(2.0)
+        .fields()
+        .show(ctx, true, |ui| {
             ui.set_min_width(380.0);
             let id = egui::Id::new("designs-new-folder-name");
             let response =
@@ -83,7 +80,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Err(e) => dialog.error = Some(crate::designs_panel::plain(&e.to_string()).to_string()),
         }
     }
-    if !open || cancel {
+    if closed {
+        cancel = true;
+    }
+    if cancel {
         return;
     }
     app.new_folder_dialog = Some(dialog);

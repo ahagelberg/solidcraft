@@ -41,19 +41,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut pick) = app.designs_pick.take() else { return };
     pick.browser.sync(ctx);
     let t = Tokens::get();
-    let mut open = true;
     let (mut go, mut cancel) = (false, false);
     let title = if pick.copy {
         crate::i18n::format("designs.copy_title", &[("name", &pick.source_name)])
     } else {
         crate::i18n::format("designs.move_title", &[("name", &pick.source_name)])
     };
-    crate::frame::window(ctx, RichText::new(title).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_folder"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_folder"), "folder", &title)
+        .cards(2.5)
+        .fields()
+        .show(ctx, true, |ui| {
             ui.set_min_width(460.0);
             ui.label(RichText::new(crate::i18n::tr("designs.folder_pick_note")).size(11.0).color(t.text_dim));
             ui.add_space(4.0);
@@ -96,7 +93,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Err(e) => pick.browser.fail(e),
         }
     }
-    if !open || cancel {
+    if closed {
+        cancel = true;
+    }
+    if cancel {
         return;
     }
     app.designs_pick = Some(pick);

@@ -537,7 +537,7 @@ fn parameters_header_drag_retains_offset_and_bounds_the_card() {
             h.call("ui.drag", json!({"x0":title.x,"y0":title.y,"x1":title.x+delta.x,"y1":title.y+delta.y,"steps":8}));
             h.frames(6);
             let card = scenario::rect_of("dialog:header").unwrap().union(scenario::rect_of("dialog:footer").unwrap());
-            let viewport = crate::shell::content_rect(&h.app, h.app.viewport.rect.unwrap());
+            let viewport = crate::shell::tool_drag_rect(&h.app, crate::shell::content_rect(&h.app, h.app.viewport.rect.unwrap()));
             assert!(viewport.expand(2.0).contains_rect(card), "{layout:?}: {card:?} outside {viewport:?}");
             assert!(h.app.params.is_some());
         }

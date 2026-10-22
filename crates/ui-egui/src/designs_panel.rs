@@ -654,14 +654,7 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
         let (home, response) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
         crate::scenario::publish_handle("designs:breadcrumb:root", home.center());
         let ink = if response.hovered() || response.has_focus() { t.accent } else { t.text };
-        crate::icons::paint(
-            ui.painter(),
-            egui::Rect::from_center_size(home.center() + vec2(0.0, 1.0), vec2(17.0, 17.0)),
-            "home",
-            ink,
-            t.icon_fill,
-            t.accent,
-        );
+        crate::icons::paint_ink(ui.painter(), egui::Rect::from_center_size(home.center() + vec2(0.0, 1.0), vec2(17.0, 17.0)), "home", ink);
         let response = response.on_hover_text(&root_name).on_hover_cursor(egui::CursorIcon::PointingHand);
         if response.clicked() {
             target = Some(root.clone());
@@ -853,9 +846,8 @@ fn kind_icon(kind: &str) -> &'static str {
 }
 
 fn draw_kind_icon(ui: &egui::Ui, rect: egui::Rect, kind: &str) {
-    let t = Tokens::get();
     let mark = egui::Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0));
-    crate::icons::paint(ui.painter(), mark, kind_icon(kind), t.icon, t.icon_fill, t.icon);
+    crate::icons::paint_on(ui.painter(), mark, kind_icon(kind), None, 1.0);
 }
 
 /// A row of the tree view: a folder, a design or an importable file, at some depth.
@@ -924,7 +916,7 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
             }
             let mark = egui::Rect::from_center_size(pos2(indent + 16.0, rect.center().y), vec2(16.0, 16.0));
-            crate::icons::paint(ui.painter(), mark, if row.folder { "folder" } else { kind_icon(&row.kind) }, t.icon, t.icon_fill, t.icon);
+            crate::icons::paint_on(ui.painter(), mark, if row.folder { "folder" } else { kind_icon(&row.kind) }, None, 1.0);
             let text = egui::Rect::from_min_max(pos2(indent, rect.top()), rect.max);
             row_text(app, ui, text, &row.path, &row.name, None);
             if response.clicked() {
@@ -1046,7 +1038,7 @@ fn draw_picture(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect, path: &str, ico
         }
         None => {
             ui.painter().rect_filled(picture, 3.0, t.panel_header);
-            crate::icons::paint(ui.painter(), egui::Rect::from_center_size(picture.center(), vec2(26.0, 26.0)), icon, t.icon, t.icon_fill, t.icon);
+            crate::icons::paint_on(ui.painter(), egui::Rect::from_center_size(picture.center(), vec2(26.0, 26.0)), icon, None, 1.0);
         }
     }
 }
@@ -1391,12 +1383,10 @@ fn apply(app: &mut SolveApp, action: Action) {
 fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(confirm) = app.designs.confirm.clone() else { return };
     let mut answer = None;
-    crate::frame::window(ctx, crate::i18n::tr_label("Delete"), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_delete"))
-        .collapsible(false)
-        .resizable(false)
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_delete"), "delete", crate::i18n::tr_label("Delete"))
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -60.0))
-        .show(ctx, |ui| {
+        .fields()
+        .show(ctx, true, |ui| {
             ui.set_max_width(360.0);
             let text = if confirm.folder {
                 crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
@@ -1423,6 +1413,9 @@ fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
         });
     if let Some(confirm) = app.designs.confirm.as_mut() {
         confirm.focus_delete = false;
+    }
+    if closed && answer.is_none() {
+        answer = Some(false);
     }
     if let Some(accept) = answer {
         app.designs.confirm = None;

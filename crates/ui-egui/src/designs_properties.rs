@@ -68,14 +68,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         properties.loaded = true;
     }
     let t = Tokens::get();
-    let mut open = true;
     let (mut ok, mut cancel, mut choose, mut remove) = (false, false, false, false);
-    crate::frame::window(ctx, RichText::new(crate::i18n::tr("designs.project_properties")).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_properties"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "folder", crate::i18n::tr("designs.project_properties"))
+        .cards(2.0)
+        .fields()
+        .show(ctx, true, |ui| {
             ui.set_min_width(420.0);
             egui::Grid::new("sc_designs_properties_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                 ui.label(crate::i18n::tr("designs.name"));
@@ -173,7 +170,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
         }
     }
-    if cancel || !open {
+    if cancel || closed {
         done = true;
     }
     if !done {

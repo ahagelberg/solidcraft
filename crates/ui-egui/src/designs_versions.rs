@@ -107,14 +107,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             (crate::i18n::tr("designs.save_version_title").to_string(), text, crate::i18n::tr("ui.save").to_string())
         }
     };
-    let mut open = true;
     let mut answer = None;
-    crate::frame::window(ctx, RichText::new(title).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_versions"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_versions"), "folder", &title)
+        .cards(2.0)
+        .fields()
+        .show(ctx, true, |ui| {
             ui.set_max_width(380.0);
             ui.label(RichText::new(text).size(12.0).color(t.text));
             ui.add_space(10.0);
@@ -142,7 +139,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
         },
         Some(false) => {}
-        None if open => {
+        None if !closed => {
             app.version_prompt = Some(prompt);
             return;
         }

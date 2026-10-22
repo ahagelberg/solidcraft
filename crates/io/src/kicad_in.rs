@@ -1131,7 +1131,7 @@ fn model_body_meshes(name: &str, body: &solidcraft_kernel::Body, color: Option<[
         out.push(solidcraft_doc::MeshData {
             name,
             positions: positions.into_iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
-            triangles,
+            triangles: triangles.into(),
             color: *color,
         });
     }
