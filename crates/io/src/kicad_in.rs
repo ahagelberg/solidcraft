@@ -1007,7 +1007,10 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                 } else {
                     let text = String::from_utf8_lossy(&model_bytes);
                     match step_model_meshes(&text, &mut totals) {
-                        Ok(meshes) => (meshes, None, Vec::new()),
+                        Ok((meshes, notes)) => {
+                            let notes = notes.iter().map(|note| format!("{}: {}", model_label(&model_path), short_reason(note))).collect();
+                            (meshes, None, notes)
+                        }
                         Err(reason) => (Vec::new(), Some(reason), Vec::new()),
                     }
                 };
@@ -1131,13 +1134,13 @@ fn short_reason(reason: &str) -> String {
     if out.is_empty() { "unsupported".to_string() } else { out }
 }
 
-/// A STEP model as meshes. A model that does not come in whole is dropped whole: a part with a
-/// missing solid is not the part the board placed, so one unreadable solid costs the model, not
-/// just that solid. `Err` says why, in a few words.
-fn step_model_meshes(text: &str, totals: &mut (usize, usize)) -> std::result::Result<Vec<solidcraft_doc::MeshData>, String> {
+/// A STEP model as meshes, and the reader's notes that cost nothing. A model that does not come in
+/// whole is dropped whole: a part with a missing solid is not the part the board placed, so one
+/// unreadable solid costs the model, not just that solid. `Err` says why, in a few words.
+fn step_model_meshes(text: &str, totals: &mut (usize, usize)) -> std::result::Result<(Vec<solidcraft_doc::MeshData>, Vec<String>), String> {
     let imported = solidcraft_kernel::step_import_shared(text).map_err(|error| short_reason(&error.to_string()))?;
-    if let Some(warning) = imported.warnings.first() {
-        // Anything the reader could not bring in leaves the model incomplete.
+    if let Some(warning) = imported.warnings.iter().find(|warning| loses_geometry(warning)) {
+        // A body, face or component the reader could not bring in leaves the model incomplete.
         let why = warning.split_once("not imported").map(|(_, rest)| rest).unwrap_or(warning);
         return Err(short_reason(why.trim_start_matches([':', ',', ' '])));
     }
@@ -1156,7 +1159,17 @@ fn step_model_meshes(text: &str, totals: &mut (usize, usize)) -> std::result::Re
             meshes.push(mesh);
         }
     }
-    Ok(meshes)
+    Ok((meshes, imported.warnings.clone()))
+}
+
+/// Whether a STEP reader warning reports geometry that is not in the model. A body, face or
+/// component the reader lost is worded as "not imported", "left out", "not shown", "could not be
+/// meshed" or a "mapped item" that failed, and a component placed at the origin lost its
+/// placement. A warning such as "face wrapping around a closed surface kept whole" keeps the face
+/// and only says how it was read, so it costs the model nothing.
+fn loses_geometry(warning: &str) -> bool {
+    const LOST: [&str; 6] = ["not imported", "left out", "not shown", "could not be meshed", "mapped item", "placed at the origin"];
+    LOST.iter().any(|phrase| warning.contains(phrase))
 }
 
 /// A model file's identity for the `files` cache. One file can arrive spelled two ways — the

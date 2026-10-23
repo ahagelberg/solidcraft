@@ -842,3 +842,20 @@ fn a_pad_opens_up_for_any_hole_it_covers() {
     let expected = 9.0 - std::f64::consts::PI * 0.3 * 0.3;
     assert!((area - expected).abs() < 0.05, "{area} vs {expected}");
 }
+
+/// The STEP reader notes how it read a face it could not split, and keeps the face; only a
+/// warning that names geometry the model does not have costs the model.
+#[test]
+fn a_reader_note_that_costs_nothing_keeps_the_model() {
+    assert!(!loses_geometry("face wrapping around a closed surface kept whole: this wire is not simple"));
+    assert!(!loses_geometry("92 entity ids are defined twice (first #17); the first definitions were used"));
+    for lost in [
+        "solid #15: not imported: unsupported surface",
+        "more than 4096 bodies: the rest are left out",
+        "solid 'housing': 2 face(s) could not be meshed and are not shown",
+        "mapped item #12: unsupported representation",
+        "component placement #3: bad transform (placed at the origin)",
+    ] {
+        assert!(loses_geometry(lost), "{lost}");
+    }
+}
