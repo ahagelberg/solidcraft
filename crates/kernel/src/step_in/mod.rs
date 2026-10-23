@@ -277,6 +277,8 @@ struct Reader {
     /// Items that gave no part: reported once when the file could not be read, else (the
     /// body could not be made) at every instance, as the message says.
     unreadable: HashMap<u64, Option<String>>,
+    /// The solids that gave no body, in file order (see [`StepImport::skipped`]).
+    skipped: Vec<StepSkip>,
     /// Items the file converts exactly once (see `index`): keeping their parts would hold a
     /// second copy of the whole import for nothing.
     once: HashSet<u64>,
@@ -330,6 +332,7 @@ impl Reader {
             colors: HashMap::new(),
             opacity: HashMap::new(),
             unreadable: HashMap::new(),
+            skipped: Vec::new(),
             once: HashSet::new(),
             shown: HashMap::new(),
             uses: HashMap::new(),
@@ -1341,6 +1344,7 @@ impl StepReading {
             return Err(KernelError::Failed(format!("STEP import: no bodies ({why})")));
         }
         let bodies = std::mem::take(&mut rd.bodies);
+        let skipped = std::mem::take(&mut rd.skipped);
         Ok(StepImport {
             bodies,
             tree,
