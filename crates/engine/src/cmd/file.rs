@@ -344,6 +344,11 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
     let component_name = import::component_name(path, name);
     let tree = if imported.plan.places.is_empty() { import::Tree::Flat } else { import::Tree::Mesh(&imported.plan) };
     let (id, placed) = import::add_in_component(s, feature.kind, &feature_name, feature.body_names, &component_name, tree)?;
+    // The board stands at the origin: its lower-left outline corner goes to X = Y = 0, not to the
+    // coordinates KiCad stores, which put a board anywhere on the project sheet.
+    if let Some(corner) = imported.corner {
+        at_origin(s, &placed, corner);
+    }
     // A solid board is a STEP import of its own, in the board's component: the mesh feature holds
     // the copper, silkscreen and models, this holds the substrate.
     let mut features = vec![id];
@@ -357,6 +362,18 @@ fn add_kicad(s: &mut Session, path: &str, name: Option<&str>, options: &solidcra
         out["board_solid"] = json!(true);
     }
     Ok(out)
+}
+
+/// Move an import's component so that the board's lower-left corner `corner` sits at the origin,
+/// contents and all: the occurrence takes the shift, so the design's Z = 0 stays the board's top.
+fn at_origin(s: &mut Session, placed: &import::Placed, corner: [f64; 2]) {
+    let Some(occurrence) = placed.occurrence else { return };
+    let shift =
+        solidcraft_doc::rigid(solidcraft_geom::Vec3::new(-corner[0], -corner[1], 0.0), solidcraft_geom::Vec3::ZERO, solidcraft_geom::Vec3::Z, 0.0);
+    if let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.id == occurrence) {
+        o.transform = shift;
+    }
+    s.refresh();
 }
 
 /// What a KiCad model reference's `${…}`/`%…%`/`$…` variables can resolve to on this machine.

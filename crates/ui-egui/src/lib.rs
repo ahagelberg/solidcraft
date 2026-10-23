@@ -78,8 +78,8 @@ pub mod inference;
 pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
-pub mod kicad_import_dialog;
 pub mod keymap;
+pub mod kicad_import_dialog;
 mod linked_source;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
