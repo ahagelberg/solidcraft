@@ -52,7 +52,7 @@ The other layers are options:
 
 ## In the window
 
-File → Open… and choose a board (the picker lists KiCad PCB files), or drop one on the window: SolidCraft opens **Open KiCad PCB** first — **Include components**, the copper as **None**, **Overlay on the board** or **Modelled**, **Include silkscreen**, the board colour and thickness (starting at the board's own) — and **Open** brings the board in as a new design with those options; **Cancel** leaves the current design alone.
+File → Open… and choose a board (the picker lists KiCad PCB files), or drop one on the window: SolidCraft opens **Open KiCad PCB** first — **Include components**, the copper as **None**, **Overlay** or **Modeled**, **Include silkscreen**, the board colour and thickness (starting at the board's own) — and **Open** brings the board in as a new design with those options; **Cancel** leaves the current design alone.
 
 `doc.open` takes the same options, so a script, the CLI or the MCP tool opens a board without the window.
 

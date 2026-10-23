@@ -70,33 +70,26 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_kicad_import"), "import", crate::i18n::tr_label("Open KiCad PCB"))
         .cards(2.0)
         .fields()
-        .actions(crate::i18n::tr("Open"), crate::i18n::tr("Cancel"), None)
+        .actions("Open", "Cancel", None)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ctx, dialog.problem().is_none(), |ui| {
             ui.label(crate::i18n::tr_label("Import options"));
             ui.add_space(6.0);
             egui::Grid::new("kicad_import_grid").num_columns(2).min_col_width(200.0).spacing([12.0, 6.0]).show(ui, |ui| {
-                let r = ui.checkbox(&mut dialog.components, crate::i18n::tr_label("Include components"));
+                let r = crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Include components"), &mut dialog.components);
                 crate::scenario::publish_handle("kicad:components", r.rect.center());
                 ui.end_row();
 
                 let copper_label = ui.label(crate::i18n::tr_label("Copper (traces, vias, zones, pads)"));
                 crate::scenario::publish_rect("kicad:copper_label", copper_label.rect);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    for (mode, label) in
-                        [(KicadCopper::None, "None"), (KicadCopper::Overlay, "Overlay on the board"), (KicadCopper::Mesh, "Modelled")]
-                    {
-                        let r = ui.radio(dialog.copper == mode, crate::i18n::tr_label(label));
-                        crate::scenario::publish_handle(&format!("kicad:copper:{}", mode.as_str()), r.rect.center());
-                        if r.clicked() {
-                            dialog.copper = mode;
-                        }
-                    }
-                });
+                // Exclusive choices are a kit dropdown: the app has no radio controls.
+                const MODES: [KicadCopper; 3] = [KicadCopper::None, KicadCopper::Overlay, KicadCopper::Mesh];
+                let mut selected = MODES.iter().position(|mode| *mode == dialog.copper).unwrap_or(0);
+                crate::ui_kit::dropdown(ui, "kicad_copper", &mut selected, &["None", "Overlay", "Modeled"]);
+                dialog.copper = MODES.get(selected).copied().unwrap_or(KicadCopper::None);
                 ui.end_row();
 
-                let r = ui.checkbox(&mut dialog.silkscreen, crate::i18n::tr_label("Include silkscreen"));
+                let r = crate::ui_kit::checkbox(ui, crate::i18n::tr_label("Include silkscreen"), &mut dialog.silkscreen);
                 crate::scenario::publish_handle("kicad:silkscreen", r.rect.center());
                 ui.end_row();
 
@@ -106,7 +99,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.end_row();
 
                 ui.label(crate::i18n::tr_label("Board thickness"));
-                let t = ui.add(egui::DragValue::new(&mut dialog.thickness).speed(0.1).range(0.01..=1000.0).suffix(" mm").max_decimals(3));
+                let t = crate::ui_kit::number_field(ui, &mut dialog.thickness, 0.01..=1000.0, 0.1, " mm");
                 crate::scenario::publish_handle("kicad:thickness", t.rect.center());
                 ui.end_row();
             });
@@ -220,11 +213,13 @@ mod tests {
         // A long switch label is not squeezed into a narrow column.
         let label = crate::scenario::rect_of("kicad:copper_label").expect("the copper label was drawn");
         assert!(label.width() > 150.0, "the copper label is squeezed: {label:?}");
-        for label in ["Include components", "Copper (traces, vias, zones, pads)", "None", "Overlay on the board", "Modelled", "Include silkscreen"] {
+        for label in ["Include components", "Copper (traces, vias, zones, pads)", "None", "Include silkscreen"] {
             assert!(h.widget(label).is_some(), "`{label}` is missing");
         }
         h.frames(4);
-        h.step(&json!({"widget": "Modelled"})).unwrap();
+        h.step(&json!({"widget": "None"})).unwrap();
+        h.frames(1);
+        h.step(&json!({"widget": "Modeled"})).unwrap();
         h.frames(1);
         h.step(&json!({"click": {"handle": "kicad:silkscreen"}})).unwrap();
         h.frames(1);
@@ -252,8 +247,11 @@ mod tests {
             (h.app.kicad_import.as_ref().expect("the window opened").thickness - 2.2).abs() < 1e-9,
             "the window did not start at the board's thickness"
         );
-        h.step(&json!({"click": {"handle": "kicad:copper:overlay"}})).unwrap();
+        h.step(&json!({"widget": "None"})).unwrap();
         h.frames(1);
+        h.step(&json!({"widget": "Overlay"})).unwrap();
+        h.frames(1);
+        assert_eq!(h.app.kicad_import.as_ref().expect("the window is open").copper, KicadCopper::Overlay, "Overlay was not chosen");
         h.step(&json!({"widget": "Open"})).unwrap();
         h.settle();
         assert!(h.app.kicad_import.is_none() && !h.app.file_load.busy());
