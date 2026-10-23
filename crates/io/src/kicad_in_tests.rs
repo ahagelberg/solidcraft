@@ -159,15 +159,6 @@ fn a_model_that_stays_out_says_why_in_a_few_words() {
     );
     assert_eq!(short_reason("   "), "unsupported");
     assert!(short_reason(&"a very long reason ".repeat(20)).chars().count() <= 61);
-    // A model that only partly came in says how much, and why; one that gave nothing says why.
-    assert_eq!(
-        model_loss_warning("DIN41612_C_2x16.step", 1, 33, "this wire is not simple"),
-        "DIN41612_C_2x16.step: 1 of 33 solids not imported (this wire is not simple)"
-    );
-    assert_eq!(
-        model_loss_warning("DIN41612_C_2x16.step", 33, 33, "this wire is not simple"),
-        "DIN41612_C_2x16.step: not imported (this wire is not simple)"
-    );
 }
 
 #[test]

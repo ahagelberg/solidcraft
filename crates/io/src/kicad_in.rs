@@ -1006,8 +1006,8 @@ pub fn read_kicad(bytes: &[u8], file: &str, options: &KicadOptions, load: KicadL
                     (Vec::new(), Some("the model file is too large".to_string()), Vec::new())
                 } else {
                     let text = String::from_utf8_lossy(&model_bytes);
-                    match step_model_meshes(&text, model_label(&model_path), &mut totals) {
-                        Ok((meshes, notes)) => (meshes, None, notes),
+                    match step_model_meshes(&text, &mut totals) {
+                        Ok(meshes) => (meshes, None, Vec::new()),
                         Err(reason) => (Vec::new(), Some(reason), Vec::new()),
                     }
                 };
@@ -1131,26 +1131,22 @@ fn short_reason(reason: &str) -> String {
     if out.is_empty() { "unsupported".to_string() } else { out }
 }
 
-/// A STEP model as meshes: the solids that built, and a warning saying how many solids stayed
-/// out and why (the others still come in — one unusable face costs that solid, not the model).
-/// `Err` says why the model gave nothing at all, in a few words.
-fn step_model_meshes(
-    text: &str,
-    label: &str,
-    totals: &mut (usize, usize),
-) -> std::result::Result<(Vec<solidcraft_doc::MeshData>, Vec<String>), String> {
+/// A STEP model as meshes. A model that does not come in whole is dropped whole: a part with a
+/// missing solid is not the part the board placed, so one unreadable solid costs the model, not
+/// just that solid. `Err` says why, in a few words.
+fn step_model_meshes(text: &str, totals: &mut (usize, usize)) -> std::result::Result<Vec<solidcraft_doc::MeshData>, String> {
     let imported = solidcraft_kernel::step_import_shared(text).map_err(|error| short_reason(&error.to_string()))?;
-    let total = imported.bodies.len().saturating_add(imported.skipped.len());
-    let mut missing: Vec<String> = imported.skipped.iter().map(|skip| short_reason(&skip.reason)).collect();
+    if let Some(warning) = imported.warnings.first() {
+        // Anything the reader could not bring in leaves the model incomplete.
+        let why = warning.split_once("not imported").map(|(_, rest)| rest).unwrap_or(warning);
+        return Err(short_reason(why.trim_start_matches([':', ',', ' '])));
+    }
+    if imported.bodies.is_empty() {
+        return Err("no solid bodies".into());
+    }
     let mut meshes = Vec::new();
     for body in &imported.bodies {
-        let parts = match model_body_meshes(&body.name, &body.body, body.color) {
-            Ok(parts) => parts,
-            Err(error) => {
-                missing.push(short_reason(&error.to_string()));
-                continue;
-            }
-        };
+        let parts = model_body_meshes(&body.name, &body.body, body.color).map_err(|error| short_reason(&error.to_string()))?;
         for mesh in parts {
             totals.0 = totals.0.saturating_add(mesh.positions.len());
             totals.1 = totals.1.saturating_add(mesh.triangles.len());
@@ -1160,18 +1156,7 @@ fn step_model_meshes(
             meshes.push(mesh);
         }
     }
-    let mut warnings = Vec::new();
-    if !missing.is_empty() {
-        let why = missing.first().map(String::as_str).unwrap_or("unsupported");
-        warnings.push(model_loss_warning(label, missing.len(), total, why));
-    }
-    Ok((meshes, warnings))
-}
-
-/// The one line a model that only partly came in is reported with: how much of it is missing and
-/// the first reason, in a few words (`label` is the model's file name).
-fn model_loss_warning(label: &str, missing: usize, total: usize, why: &str) -> String {
-    if missing >= total { format!("{label}: not imported ({why})") } else { format!("{label}: {missing} of {total} solids not imported ({why})") }
+    Ok(meshes)
 }
 
 /// A model file's identity for the `files` cache. One file can arrive spelled two ways — the

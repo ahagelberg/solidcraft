@@ -84,9 +84,6 @@ pub struct StepImport {
     pub tree: Vec<StepNode>,
     /// What could not be read (unsupported entities, faces left out…).
     pub warnings: Vec<String>,
-    /// Solids that did not become a body, in the order the walk met them: a caller reports them
-    /// (and how many of how many) instead of losing them silently.
-    pub skipped: Vec<StepSkip>,
     /// FILE_SCHEMA (e.g. `AUTOMOTIVE_DESIGN`, `CONFIG_CONTROL_DESIGN`, `AP242_…`).
     pub schema: String,
     /// FILE_NAME originating system.
@@ -95,15 +92,6 @@ pub struct StepImport {
     pub preprocessor: String,
     /// FILE_DESCRIPTION text.
     pub description: String,
-}
-
-/// A solid of a STEP file that did not become a body.
-#[derive(Clone, Debug)]
-pub struct StepSkip {
-    /// The solid's name as the file labels it.
-    pub name: String,
-    /// Why it did not come in, as the kernel puts it (one line, for a warning a reader shows).
-    pub reason: String,
 }
 
 /// A solid the walk found, converted later.
@@ -302,8 +290,6 @@ struct Reader {
     /// Items that gave no part: reported once when the file could not be read, else (the
     /// body could not be made) at every instance, as the message says.
     unreadable: HashMap<u64, Option<String>>,
-    /// The solids that gave no body, in file order (see [`StepImport::skipped`]).
-    skipped: Vec<StepSkip>,
     /// Items the file converts exactly once (see `index`): keeping their parts would hold a
     /// second copy of the whole import for nothing.
     once: HashSet<u64>,
@@ -355,7 +341,6 @@ impl Reader {
             colors: HashMap::new(),
             opacity: HashMap::new(),
             unreadable: HashMap::new(),
-            skipped: Vec::new(),
             once: HashSet::new(),
             shown: HashMap::new(),
             uses: HashMap::new(),
@@ -794,7 +779,6 @@ impl Reader {
             if let Some(again) = self.unreadable.get(&item) {
                 if let Some(msg) = again.clone() {
                     let label = self.label(item);
-                    self.skipped.push(StepSkip { name: label.clone(), reason: msg.clone() });
                     self.warn(format!("{label}: not imported: {msg}"));
                 }
                 continue;
@@ -880,7 +864,6 @@ impl Reader {
                 }
                 Err(parallel::Failure { read, msg }) => {
                     let label = self.label(item);
-                    self.skipped.push(StepSkip { name: label.clone(), reason: msg.clone() });
                     self.warn(format!("{label}: not imported: {msg}"));
                     // Later instances don't read the item again.
                     if !self.oriented.contains_key(&item) {
@@ -1339,12 +1322,10 @@ impl StepReading {
             return Err(KernelError::Failed(format!("STEP import: no bodies ({why})")));
         }
         let bodies = std::mem::take(&mut rd.bodies);
-        let skipped = std::mem::take(&mut rd.skipped);
         Ok(StepImport {
             bodies,
             tree,
             warnings,
-            skipped,
             schema: ex.schemas.join(", "),
             system: ex.originating_system.clone(),
             preprocessor: ex.preprocessor.clone(),
