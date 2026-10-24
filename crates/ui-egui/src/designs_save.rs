@@ -67,15 +67,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.save_to_repo.take() else { return };
     dialog.browser.sync(ctx);
     let t = Tokens::get();
-    let mut open = true;
     let (mut save, mut cancel) = (false, false);
     let shown = dialog.browser.folder().to_path_buf();
-    crate::frame::window(ctx, RichText::new(crate::i18n::tr("designs.save_title")).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_save"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_save"), "save", crate::i18n::tr("designs.save_title")).cards(2.5).show(
+        ctx,
+        true,
+        |ui| {
             ui.set_min_width(460.0);
             // The repository, its folders and a new one if wanted: the same browser Move and
             // Copy show, so a save can also go to another repository.
@@ -122,7 +119,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     cancel = true;
                 }
             });
-        });
+        },
+    );
+    let open = !closed;
     // Another folder (or repository) means the replace question was about another file.
     if dialog.browser.folder() != shown.as_path() {
         dialog.replace = None;
@@ -180,6 +179,7 @@ mod tests {
     #[test]
     fn save_as_can_write_into_another_repository() {
         let mut h = crate::scenario::Harness::new();
+        h.app.services.designs_panel = true;
         let (first, second) = (h.dir.join("first"), h.dir.join("second"));
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();

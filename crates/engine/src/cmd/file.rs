@@ -705,6 +705,9 @@ impl Session {
         self.read_only = done.read_only;
         self.saved = done.saved.clone();
         self.saved_visibility = done.saved_visibility.clone();
+        // The save made the file's next version: the session it ran on knows which.
+        (self.version, self.versions) = (done.version, done.versions);
+        self.mark_saved();
     }
 
     /// Another program or computer wrote the design's file since it was opened or last saved:

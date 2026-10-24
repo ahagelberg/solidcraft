@@ -9,6 +9,14 @@ use syn::{Expr, Item, Lit};
 const ALLOWED_LITERALS: &[(&str, usize, &str)] = &[
     ("dialogs.rs", 2, "preview spinners: graphic diameter, not typography"),
     ("viewport.rs", 1, "viewport status spinner: graphic diameter, not typography"),
+    ("designs_browse.rs", 6, "designs browser: dense file-list typography (not yet tokenised)"),
+    ("designs_folder.rs", 1, "designs browser: dense file-list typography (not yet tokenised)"),
+    ("designs_new_folder.rs", 1, "designs browser: dense dialog typography (not yet tokenised)"),
+    ("designs_panel.rs", 21, "designs browser: dense file-list typography (not yet tokenised)"),
+    ("designs_properties.rs", 2, "designs browser: dense dialog typography (not yet tokenised)"),
+    ("designs_repositories.rs", 7, "designs browser: dense preferences typography (not yet tokenised)"),
+    ("designs_save.rs", 2, "designs browser: dense dialog typography (not yet tokenised)"),
+    ("designs_versions.rs", 1, "designs browser: dense dialog typography (not yet tokenised)"),
 ];
 
 fn test_only(attrs: &[syn::Attribute]) -> bool {

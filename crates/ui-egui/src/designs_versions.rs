@@ -107,30 +107,25 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             (crate::i18n::tr("designs.save_version_title").to_string(), text, crate::i18n::tr("ui.save").to_string())
         }
     };
-    let mut open = true;
     let mut answer = None;
-    crate::frame::window(ctx, RichText::new(title).strong().size(13.0), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_versions"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .show(ctx, |ui| {
-            ui.set_max_width(380.0);
-            ui.label(RichText::new(text).size(12.0).color(t.text));
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let go_button = ui.button(go.as_str());
-                crate::scenario::publish_handle("designs:version_go", go_button.rect.center());
-                if go_button.clicked() {
-                    answer = Some(true);
-                }
-                let cancel_button = ui.button(crate::i18n::tr("designs.cancel"));
-                crate::scenario::publish_handle("designs:version_cancel", cancel_button.rect.center());
-                if cancel_button.clicked() {
-                    answer = Some(false);
-                }
-            });
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_versions"), "box", &title).cards(2.0).show(ctx, true, |ui| {
+        ui.set_max_width(380.0);
+        ui.label(RichText::new(text).size(12.0).color(t.text));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let go_button = ui.button(go.as_str());
+            crate::scenario::publish_handle("designs:version_go", go_button.rect.center());
+            if go_button.clicked() {
+                answer = Some(true);
+            }
+            let cancel_button = ui.button(crate::i18n::tr("designs.cancel"));
+            crate::scenario::publish_handle("designs:version_cancel", cancel_button.rect.center());
+            if cancel_button.clicked() {
+                answer = Some(false);
+            }
         });
+    });
+    let open = !closed;
     match answer {
         Some(true) => match prompt {
             Prompt::Open { path, version, .. } => app.open_version_async(&path, version),
