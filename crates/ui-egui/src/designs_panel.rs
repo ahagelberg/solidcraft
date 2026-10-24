@@ -218,11 +218,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     sync(app, ui.ctx());
     let t = Tokens::get();
     let width = app.preferences.designs_width.clamp(WIDTH_MIN, WIDTH_MAX);
-    let panel = egui::Panel::left("sc_designs")
+    let container = crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel);
+    let panel = container
+        .edge(egui::Id::new("sc_designs"), crate::ui_kit::Edge::Left)
         .default_size(width)
         .size_range(WIDTH_MIN..=WIDTH_MAX)
         .resizable(true)
-        .frame(egui::Frame::NONE.fill(t.panel_header).inner_margin(egui::Margin::symmetric(6, 6)))
+        .frame(container.frame(ui.ctx(), t.panel_header, crate::frame::Side::Left).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
             control_style(ui, &t);
             repository_header(app, ui, &t);
@@ -654,14 +656,7 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
         let (home, response) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
         crate::scenario::publish_handle("designs:breadcrumb:root", home.center());
         let ink = if response.hovered() || response.has_focus() { t.accent } else { t.text };
-        crate::icons::paint(
-            ui.painter(),
-            egui::Rect::from_center_size(home.center() + vec2(0.0, 1.0), vec2(17.0, 17.0)),
-            "home",
-            ink,
-            t.icon_fill,
-            t.accent,
-        );
+        crate::icons::paint_ink(ui.painter(), egui::Rect::from_center_size(home.center() + vec2(0.0, 1.0), vec2(17.0, 17.0)), "home", ink);
         let response = response.on_hover_text(&root_name).on_hover_cursor(egui::CursorIcon::PointingHand);
         if response.clicked() {
             target = Some(root.clone());
@@ -840,22 +835,20 @@ const ROW_COMPACT: f32 = 26.0;
 const ROW_TREE: f32 = 21.0;
 
 /// The compact row's icon: one clear mark for a folder and for each kind of file, so a folder
-/// never looks like a design and the importers stay apart. There is no dedicated mesh or board
-/// artwork in the set yet: a grey body marks imported geometry, and a drawing sheet a board.
+/// never looks like a design and the importers stay apart. There is no dedicated mesh artwork in
+/// the set yet: a grey body marks imported geometry.
 fn kind_icon(kind: &str) -> &'static str {
     match kind {
         "design" => "box",
         "step" => "import",
         "mesh" => "body",
-        "kicad" => "dxf",
         _ => "folder",
     }
 }
 
 fn draw_kind_icon(ui: &egui::Ui, rect: egui::Rect, kind: &str) {
-    let t = Tokens::get();
     let mark = egui::Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), vec2(16.0, 16.0));
-    crate::icons::paint(ui.painter(), mark, kind_icon(kind), t.icon, t.icon_fill, t.icon);
+    crate::icons::paint_icon(ui.painter(), mark, kind_icon(kind), 1.0);
 }
 
 /// A row of the tree view: a folder, a design or an importable file, at some depth.
@@ -924,7 +917,7 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
             }
             let mark = egui::Rect::from_center_size(pos2(indent + 16.0, rect.center().y), vec2(16.0, 16.0));
-            crate::icons::paint(ui.painter(), mark, if row.folder { "folder" } else { kind_icon(&row.kind) }, t.icon, t.icon_fill, t.icon);
+            crate::icons::paint_icon(ui.painter(), mark, if row.folder { "folder" } else { kind_icon(&row.kind) }, 1.0);
             let text = egui::Rect::from_min_max(pos2(indent, rect.top()), rect.max);
             row_text(app, ui, text, &row.path, &row.name, None);
             if response.clicked() {
@@ -947,9 +940,13 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             }
             let (path, name) = (row.path.clone(), row.name.clone());
             if row.folder {
-                response.context_menu(|ui| folder_menu(app, ui, &path, &name, &mut actions));
+                crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel)
+                    .context_menu(&response)
+                    .show(|ui| folder_menu(app, ui, &path, &name, &mut actions));
             } else {
-                response.context_menu(|ui| design_menu(app, ui, &path, &name, &mut actions));
+                crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel)
+                    .context_menu(&response)
+                    .show(|ui| design_menu(app, ui, &path, &name, &mut actions));
             }
         }
     });
@@ -1046,7 +1043,7 @@ fn draw_picture(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect, path: &str, ico
         }
         None => {
             ui.painter().rect_filled(picture, 3.0, t.panel_header);
-            crate::icons::paint(ui.painter(), egui::Rect::from_center_size(picture.center(), vec2(26.0, 26.0)), icon, t.icon, t.icon_fill, t.icon);
+            crate::icons::paint_icon(ui.painter(), egui::Rect::from_center_size(picture.center(), vec2(26.0, 26.0)), icon, 1.0);
         }
     }
 }
@@ -1134,7 +1131,9 @@ fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &Folde
     }
     let path = folder.path.clone();
     let name = folder.name.clone();
-    response.context_menu(|ui| folder_menu(app, ui, &path, &name, actions));
+    crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel)
+        .context_menu(&response)
+        .show(|ui| folder_menu(app, ui, &path, &name, actions));
 }
 
 fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &DesignRow, actions: &mut Vec<Action>, thumbnails: bool) {
@@ -1163,7 +1162,9 @@ fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &Desig
     }
     let path = design.path.clone();
     let name = design.name.clone();
-    response.context_menu(|ui| design_menu(app, ui, &path, &name, actions));
+    crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel)
+        .context_menu(&response)
+        .show(|ui| design_menu(app, ui, &path, &name, actions));
 }
 
 /// The row's version selector (`V3`), like a file browser's: it lists the versions, newest first,
@@ -1182,27 +1183,30 @@ fn version_button(ui: &mut egui::Ui, row: egui::Rect, design: &DesignRow, action
     // The popup is offered every frame (it keeps its own open state), not only on the click frame.
     // A click on one of the versions does not close it by itself: choosing one closes it, while a
     // right click keeps it open beside the version's own menu (below).
-    egui::Popup::menu(&button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-        for version in (1..=versions).rev() {
-            let current = version == versions;
-            let label = if current {
-                crate::i18n::format("designs.version_current", &[("version", &version.to_string())])
-            } else {
-                crate::i18n::format("designs.version", &[("version", &version.to_string())])
-            };
-            let item = ui.button(label);
-            if item.clicked() {
-                chosen = Some(version);
-                ui.close();
+    crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel)
+        .menu(&button)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            for version in (1..=versions).rev() {
+                let current = version == versions;
+                let label = if current {
+                    crate::i18n::format("designs.version_current", &[("version", &version.to_string())])
+                } else {
+                    crate::i18n::format("designs.version", &[("version", &version.to_string())])
+                };
+                let item = ui.button(label);
+                if item.clicked() {
+                    chosen = Some(version);
+                    ui.close();
+                }
+                // A version's own menu (right click): make it the latest, or drop the ones before it.
+                // The list stays open, so the menu never floats alone.
+                if item.secondary_clicked() {
+                    menu = Some(version);
+                    menu_at = Some(item.rect.right_top() + vec2(4.0, 0.0));
+                }
             }
-            // A version's own menu (right click): make it the latest, or drop the ones before it.
-            // The list stays open, so the menu never floats alone.
-            if item.secondary_clicked() {
-                menu = Some(version);
-                menu_at = Some(item.rect.right_top() + vec2(4.0, 0.0));
-            }
-        }
-    });
+        });
     if let Some(version) = menu {
         let at = menu_at.or_else(|| ui.ctx().pointer_interact_pos()).unwrap_or(rect.left_bottom());
         actions.push(Action::VersionMenu { path, version, versions, at });
@@ -1227,28 +1231,34 @@ fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
     // Keep it on screen: a row near the bottom or the right edge would push it out.
     let screen = ctx.content_rect();
     let at = pos2((menu.at.x).min(screen.right() - 200.0).max(screen.left()), (menu.at.y).min(screen.bottom() - 70.0).max(screen.top()));
-    let area = egui::Area::new(egui::Id::new("designs-version-menu")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
-        egui::Frame::popup(ui.style()).show(ui, |ui| {
-            ui.set_min_width(190.0);
-            ui.label(RichText::new(crate::i18n::format("designs.version", &[("version", &menu.version.to_string())])).size(10.5).color(t.text_dim));
-            ui.add_space(2.0);
-            let width = ui.available_width();
-            let up = ui.add_enabled(
-                menu.version < menu.versions,
-                egui::Button::new(RichText::new(crate::i18n::tr("designs.promote")).size(12.0)).min_size(vec2(width, 20.0)),
-            );
-            if up.on_disabled_hover_text(crate::i18n::tr("designs.promote_current")).clicked() {
-                ask = Some(true);
-            }
-            let older = ui.add_enabled(
-                menu.version > 1,
-                egui::Button::new(RichText::new(crate::i18n::tr("designs.purge_older")).size(12.0)).min_size(vec2(width, 20.0)),
-            );
-            if older.on_disabled_hover_text(crate::i18n::tr("designs.purge_first")).clicked() {
-                ask = Some(false);
-            }
+    let area = crate::ui_kit::Container::new(ctx, crate::ui_kit::Surface::Panel)
+        .area(egui::Id::new("designs-version-menu"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(at)
+        .show(ctx, |ui| {
+            crate::ui_kit::Container::popup_frame(ui.style()).show(ui, |ui| {
+                ui.set_min_width(190.0);
+                ui.label(
+                    RichText::new(crate::i18n::format("designs.version", &[("version", &menu.version.to_string())])).size(10.5).color(t.text_dim),
+                );
+                ui.add_space(2.0);
+                let width = ui.available_width();
+                let up = ui.add_enabled(
+                    menu.version < menu.versions,
+                    egui::Button::new(RichText::new(crate::i18n::tr("designs.promote")).size(12.0)).min_size(vec2(width, 20.0)),
+                );
+                if up.on_disabled_hover_text(crate::i18n::tr("designs.promote_current")).clicked() {
+                    ask = Some(true);
+                }
+                let older = ui.add_enabled(
+                    menu.version > 1,
+                    egui::Button::new(RichText::new(crate::i18n::tr("designs.purge_older")).size(12.0)).min_size(vec2(width, 20.0)),
+                );
+                if older.on_disabled_hover_text(crate::i18n::tr("designs.purge_first")).clicked() {
+                    ask = Some(false);
+                }
+            });
         });
-    });
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let clicked_outside = !menu.fresh && ctx.input(|i| i.pointer.any_click()) && !area.response.contains_pointer();
     let question = match ask {
@@ -1389,36 +1399,31 @@ fn apply(app: &mut SolveApp, action: Action) {
 fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(confirm) = app.designs.confirm.clone() else { return };
     let mut answer = None;
-    crate::frame::window(ctx, crate::i18n::tr_label("Delete"), crate::frame::Width::Normal)
-        .id(egui::Id::new("sc_designs_delete"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -60.0))
-        .show(ctx, |ui| {
-            ui.set_max_width(360.0);
-            let text = if confirm.folder {
-                crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
-            } else {
-                crate::i18n::format("designs.delete_confirm", &[("name", &confirm.name)])
-            };
-            ui.label(text);
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let delete = ui.button(crate::i18n::tr("designs.delete"));
-                if confirm.focus_delete {
-                    delete.request_focus();
-                }
-                crate::scenario::publish_handle("designs:confirm:delete", delete.rect.center());
-                if delete.clicked() {
-                    answer = Some(true);
-                }
-                let cancel = ui.button(crate::i18n::tr("designs.cancel"));
-                crate::scenario::publish_handle("designs:confirm:cancel", cancel.rect.center());
-                if cancel.clicked() {
-                    answer = Some(false);
-                }
-            });
+    let _ = crate::ui_kit::Window::new(egui::Id::new("sc_designs_delete"), "delete", crate::i18n::tr("Delete")).cards(2.0).show(ctx, true, |ui| {
+        ui.set_max_width(360.0);
+        let text = if confirm.folder {
+            crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
+        } else {
+            crate::i18n::format("designs.delete_confirm", &[("name", &confirm.name)])
+        };
+        ui.label(text);
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let delete = ui.button(crate::i18n::tr("designs.delete"));
+            if confirm.focus_delete {
+                delete.request_focus();
+            }
+            crate::scenario::publish_handle("designs:confirm:delete", delete.rect.center());
+            if delete.clicked() {
+                answer = Some(true);
+            }
+            let cancel = ui.button(crate::i18n::tr("designs.cancel"));
+            crate::scenario::publish_handle("designs:confirm:cancel", cancel.rect.center());
+            if cancel.clicked() {
+                answer = Some(false);
+            }
         });
+    });
     if let Some(confirm) = app.designs.confirm.as_mut() {
         confirm.focus_delete = false;
     }
