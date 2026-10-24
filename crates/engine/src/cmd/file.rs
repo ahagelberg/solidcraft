@@ -419,7 +419,8 @@ fn write_bytes(
     let base = if s.path.as_deref() == Some(path) { s.version } else { None };
     let written = match format {
         "container" => {
-            let geometry = cache.then(|| saved_geometry(s)).flatten();
+            let design = s.design();
+            let geometry = cache.then(|| saved_geometry(s, &design)).flatten();
             let preview = preview.then(|| saved_preview(s)).flatten();
             let thumbnail = cache.then(|| thumbnail::saved(s)).flatten();
             match previous.as_deref() {
@@ -438,10 +439,10 @@ fn write_bytes(
                         ));
                     }
                     let (bytes, version) = solidcraft_io::write_design_container_versioned(
-                        &s.design(),
+                        &design,
                         compression,
                         preview.as_ref(),
-                        geometry.as_deref(),
+                        geometry.as_ref(),
                         thumbnail.as_deref(),
                         Some(previous),
                         base,
@@ -450,10 +451,10 @@ fn write_bytes(
                 }
                 None => (
                     solidcraft_io::write_design_container_with_thumbnail(
-                        &s.design(),
+                        &design,
                         compression,
                         preview.as_ref(),
-                        geometry.as_deref(),
+                        geometry.as_ref(),
                         thumbnail.as_deref(),
                     )?,
                     Some(1),
@@ -487,6 +488,8 @@ impl Session {
             self.doc_mut().links.clone_from(&done.doc.links);
         }
         self.path.clone_from(&done.path);
+        // The save made the file's next version: the session it ran on knows which.
+        (self.version, self.versions) = (done.version, done.versions);
         self.mark_saved();
     }
 
