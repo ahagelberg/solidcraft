@@ -906,6 +906,9 @@ impl Session {
         self.read_only = done.read_only;
         self.saved = done.saved.clone();
         self.saved_visibility = done.saved_visibility.clone();
+        // The save made the file's next version: the session it ran on knows which.
+        (self.version, self.versions) = (done.version, done.versions);
+        self.mark_saved();
     }
 
     /// The design's file was renamed (browser OPFS rename, or an equivalent host move): keep the

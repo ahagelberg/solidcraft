@@ -441,6 +441,14 @@ fn the_row_lists_the_versions_and_an_old_one_asks_before_it_opens_and_saves() {
         h.app.version_prompt
     );
     h.run(&json!([{ "widget": "Save" }])).unwrap();
+    // The save runs on a worker so the window keeps drawing: let it finish.
+    for _ in 0..200 {
+        if h.app.session.version.is_none() {
+            break;
+        }
+        h.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert_eq!(h.app.session.version, None, "the save did not go through");
     assert_eq!(h.app.session.versions, 2, "the edited version 1 should be the file's version 2");
 }

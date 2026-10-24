@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("folder")
         .noundo()
         .doc_only()
-        .params("path: an absolute folder -> {path, folders: [{name, path, description, has_thumbnail}], designs: [{name, path, modified, kind, versions}], truncated}; at most 2000 entries. `designs` lists the designs and the files SolidCraft can open (`kind`: `design`, `step` for STEP, IGES, FreeCAD and Rhino, `mesh` for 3MF, STL, OBJ and glTF, `kicad` for a board or project); `versions` is how many versions a design file holds (1 when it has none)"),
+        .params("path: an absolute folder -> {path, folders: [{name, path, description, has_thumbnail}], designs: [{name, path, modified, kind, versions}], truncated}; at most 2000 entries. `designs` lists the designs and the files SolidCraft can open (`kind`: `design`, `step` for STEP, IGES, FreeCAD and Rhino, `mesh` for 3MF, STL, OBJ and glTF); `versions` is how many versions a design file holds (1 when it has none)"),
     CommandSpec::new("designs.folder_new", "New Folder", folder_new)
         .icon("new")
         .noundo()
@@ -117,7 +117,6 @@ fn list_at(root: &Path) -> Result<Value> {
             }));
         } else if meta.is_file()
             && let Some(kind) = file_kind(path.to_string_lossy().as_ref())
-            && !project_beside_its_board(&path)
         {
             let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&name).to_string();
@@ -493,9 +492,8 @@ fn is_design_file(path: &Path) -> bool {
 }
 
 /// What a listed file is (`design`), or which importer opens it: `step` for STEP, IGES, FreeCAD
-/// and Rhino (`file.insert_step`), `mesh` for 3MF, STL, OBJ and glTF (`file.insert_mesh`), and
-/// `kicad` for a KiCad board or project, which opens with its import settings. `None`: SolidCraft
-/// can't open it, so it is not listed.
+/// and Rhino (`file.insert_step`), and `mesh` for 3MF, STL, OBJ and glTF (`file.insert_mesh`).
+/// `None`: SolidCraft can't open it, so it is not listed.
 fn file_kind(path: &str) -> Option<&'static str> {
     if is_design_file(Path::new(path)) {
         Some("design")
@@ -503,8 +501,6 @@ fn file_kind(path: &str) -> Option<&'static str> {
         Some("step")
     } else if solidcraft_io::is_mesh_path(path) {
         Some("mesh")
-    } else if solidcraft_io::is_kicad_path(path) {
-        Some("kicad")
     } else {
         None
     }
@@ -515,12 +511,6 @@ fn name_has_design_extension(name: &str) -> bool {
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| solidcraft_io::DESIGN_EXTS.iter().any(|x| e.eq_ignore_ascii_case(x)) || e.eq_ignore_ascii_case("json"))
-}
-
-/// A KiCad project is not a second row when its board sits next to it: the board is what opens
-/// (the importer resolves a project to its board) and the row would carry the same name.
-fn project_beside_its_board(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("kicad_pro")) && path.with_extension("kicad_pcb").is_file()
 }
 
 /// Whether `candidate` is `folder` or below it, by components; both are made absolute first,
@@ -670,10 +660,6 @@ mod tests {
             "part.OBJ",
             "print.3mf",
             "gltf.glb",
-            "board.kicad_pcb",
-            "project.kicad_pro",
-            "pair.kicad_pcb",
-            "pair.kicad_pro",
             "notes.txt",
             "sheet.pdf",
         ] {
@@ -694,12 +680,6 @@ mod tests {
         for mesh in ["mesh", "part", "print", "gltf"] {
             assert_eq!(kind(mesh), "mesh", "{mesh}");
         }
-        // A board and a project open through the KiCad settings window, so both are listed. A
-        // project beside its board is not a second row: the board is the one that opens.
-        for board in ["board", "project", "pair"] {
-            assert_eq!(kind(board), "kicad", "{board}");
-        }
-        assert_eq!(rows.iter().filter(|(n, _)| n == "pair").count(), 1, "{rows:?}");
         // Files SolidCraft cannot open are not listed.
         assert!(!rows.iter().any(|(n, _)| n == "notes" || n == "sheet"), "{rows:?}");
         std::fs::remove_dir_all(d).unwrap();
