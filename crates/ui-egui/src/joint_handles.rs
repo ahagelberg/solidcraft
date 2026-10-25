@@ -57,7 +57,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, proj: &Proj) {
     };
     let dirs = [ox - o, oy - o, oz - o];
     let cols = [t.axis_x, t.axis_y, t.axis_z];
-    let painter = ui.painter().clone();
+    // Painted on its own layer: the arrows are drawn above the model they sit on.
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("joint_gizmo")));
     painter.circle(o, 4.0, t.sel_vertex, Stroke::new(1.0, t.hover_edge));
     for (i, d) in dirs.iter().enumerate() {
         let tip = o + d.normalized() * LENGTH;
