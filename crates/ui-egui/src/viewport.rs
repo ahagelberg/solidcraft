@@ -3158,6 +3158,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     app.viewport.face_lock = lock;
+    // The edited joint's arrows take a press before the view picks what is under it.
+    crate::joint_handles::show(app, ui, &proj);
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up.
     let held =
@@ -3373,7 +3375,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && !held
             && app.dialog.is_none()
             && crate::dim_view::pick_reference(ui.ctx(), p, resp.double_clicked());
-        if resp.clicked() && !held && !reference_pick {
+        if resp.clicked() && !held && !reference_pick && app.viewport.joint_gizmo.is_none() {
             if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p, mods.shift);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
@@ -3732,7 +3734,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::drag_extrude::tick(app);
     crate::drag_extrude::show(app, &painter);
     points_2d(app, &painter, &proj);
-    crate::joint_handles::show(app, ui, &proj);
     if let Some((plane, sketch)) = crate::sketch_attachment_ui::lost_guide(app)
         && let Some((low, high)) = sketch.bounds()
         && let Some(at) = proj.to_screen(plane.to_world(solidcraft_engine::geom::Vec2::new((low.x + high.x) * 0.5, high.y)))
