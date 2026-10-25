@@ -29,6 +29,8 @@ pub enum Kind {
 pub struct Point {
     pub at: Vec3,
     pub kind: Kind,
+    /// The face's own edge this point is the middle of (0 for a corner or the centre).
+    pub edge: usize,
 }
 
 /// What holding Ctrl over a face locks the pick to.
@@ -40,15 +42,24 @@ pub struct Lock {
     /// The point under the pointer, when one is near enough; `None` takes the face itself, at the
     /// pointer, so Ctrl over a face always picks something of that face.
     pub chosen: Option<usize>,
+    /// The face's outward normal: the direction a joint picked on it takes.
+    pub normal: Vec3,
 }
 
 impl Lock {
-    /// The hit the pointer makes while the face is locked: the chosen point, or the face where the
-    /// pointer is. Every point is a place on the face, not a corner or an edge of its own, so the
-    /// joint takes the face's direction (perpendicular to it) wherever the point sits on it.
+    /// The hit the pointer makes while the face is locked: the chosen point as itself (a corner is
+    /// the vertex, an edge's middle a point on that edge, the centre a place on the face), or the
+    /// face where the pointer is. The direction is the face's normal, which the dialog adds to the
+    /// pick (see `JointForm::dirs`), so the joint still runs perpendicular to the face.
     pub fn hit(&self, at: Vec3) -> Hit {
-        let point = self.chosen.and_then(|i| self.points.get(i)).map_or(at, |p| p.at);
-        Hit::Face { body: self.body.clone(), index: self.face, point }
+        match self.chosen.and_then(|i| self.points.get(i)) {
+            Some(p) => match p.kind {
+                Kind::Corner => Hit::Vertex { body: self.body.clone(), point: p.at },
+                Kind::EdgeMid => Hit::Edge { body: self.body.clone(), index: p.edge, mid: p.at },
+                Kind::Centre => Hit::Face { body: self.body.clone(), index: self.face, point: p.at },
+            },
+            None => Hit::Face { body: self.body.clone(), index: self.face, point: at },
+        }
     }
 }
 
@@ -91,7 +102,29 @@ pub fn lock(app: &crate::SolveApp, hits: &[Hit], proj: &Proj, pointer: Pos2) -> 
             }
         }
     }
-    Some(Lock { body: body.clone(), face: *index, points, chosen })
+    let normal = {
+        let n = face_normal(&mesh, *index);
+        if moved { solidcraft_engine::doc::apply_vector(&place, n) } else { n }
+    };
+    Some(Lock { body: body.clone(), face: *index, points, chosen, normal })
+}
+
+/// The face's outward normal, from the triangles it is drawn with.
+fn face_normal(mesh: &solidcraft_engine::geom::Mesh, face: usize) -> Vec3 {
+    let mut sum = Vec3::ZERO;
+    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        if *f as usize != face {
+            continue;
+        }
+        let (Some(a), Some(b), Some(c)) = (t.first(), t.get(1), t.get(2)) else { continue };
+        let p = |i: &u32| mesh.positions.get(*i as usize).copied();
+        let (Some(a), Some(b), Some(c)) = (p(a), p(b), p(c)) else { continue };
+        let n = (b - a).cross(c - a);
+        if n.is_finite() {
+            sum += n;
+        }
+    }
+    if sum.len() < 1e-12 { Vec3::Z } else { sum * (1.0 / sum.len()) }
 }
 
 /// The corners, edges' middles and centre of a mesh's face (in the mesh's own frame).
@@ -113,13 +146,13 @@ pub fn face_points(mesh: &solidcraft_engine::geom::Mesh, face: usize) -> Vec<Poi
         }
         let mid = crate::selection::polyline_mid(line);
         if mid.is_finite() {
-            points.push(Point { at: mid, kind: Kind::EdgeMid });
+            points.push(Point { at: mid, kind: Kind::EdgeMid, edge: i });
         }
     }
-    let mut all: Vec<Point> = corners.iter().map(|c| Point { at: *c, kind: Kind::Corner }).collect();
+    let mut all: Vec<Point> = corners.iter().map(|c| Point { at: *c, kind: Kind::Corner, edge: 0 }).collect();
     all.append(&mut points);
     if let Some(centre) = centre(&corners) {
-        all.push(Point { at: centre, kind: Kind::Centre });
+        all.push(Point { at: centre, kind: Kind::Centre, edge: 0 });
     }
     all
 }

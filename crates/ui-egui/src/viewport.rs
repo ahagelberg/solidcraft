@@ -3670,6 +3670,14 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
     }
     let sel = crate::dialogs_move::from_shown(app, sel);
     let Some(mut d) = app.dialog.take() else { return };
+    // A pick on a Ctrl-locked face keeps that face's direction: the point is the corner, an edge's
+    // middle or the centre itself, and the joint runs perpendicular to the face there.
+    if let Some(lock) = app.viewport.face_lock.as_ref()
+        && let crate::dialogs::Kind::Assembly(crate::dialogs_assembly::Asm::Joint(f)) = &mut d.kind
+        && let Some(at) = crate::dialogs_assembly::sel_point(&sel)
+    {
+        f.dirs.insert(crate::dialogs_assembly::dir_key(at), lock.normal);
+    }
     // With several holes on a face (Preferences), a Single hole's pick adds a hole or takes one
     // out; with holes moving by clicking, a Single hole picked again on its face moves there.
     if crate::hole_place::pick_several(app, &mut d, &sel) || (app.preferences.hole_moves && crate::hole_place::pick_moves(&mut d, &app.session, &sel))

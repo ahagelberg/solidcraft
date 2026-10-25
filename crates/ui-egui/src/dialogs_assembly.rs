@@ -207,6 +207,9 @@ pub struct JointForm {
     pub searched: Option<Searched>,
     /// Edit Joint Limits: open the Limits section when the dialog first draws.
     pub show_limits: bool,
+    /// The direction each pick came with (a point on a Ctrl-locked face: that face's normal), by
+    /// the point it was picked at, so a corner or an edge's middle still faces like the face.
+    pub dirs: std::collections::BTreeMap<[u64; 3], Vec3>,
     pub animate: bool,
     /// Animation phase, 0…1.
     pub phase: f64,
@@ -231,6 +234,7 @@ impl JointForm {
             found_note: None,
             searched: None,
             show_limits: false,
+            dirs: std::collections::BTreeMap::new(),
             animate: false,
             phase: 0.0,
             hover: None,
@@ -801,6 +805,20 @@ fn shifted(s: &SnapPt, x: f64, y: f64) -> Value {
         p["occurrence"] = o.clone();
     }
     p
+}
+
+/// The point a pick sits at (a vertex, a point on an edge, a place on a face).
+pub(crate) fn sel_point(sel: &Sel) -> Option<Vec3> {
+    match sel {
+        Sel::Vertex { point, .. } | Sel::Edge { point, .. } | Sel::Face { point, .. } => Some(*point),
+        _ => None,
+    }
+}
+
+/// The key a point is remembered by, in a joint form's `dirs` (mm, to the micron).
+pub(crate) fn dir_key(at: Vec3) -> [u64; 3] {
+    let q = |v: f64| (v * 1000.0).round() as i64 as u64;
+    [q(at.x), q(at.y), q(at.z)]
 }
 
 // ---- rows ----
@@ -1577,7 +1595,17 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
                 }
                 return Ok(cmd("joint.as_built", p));
             }
-            let (a, b) = (snap(0, "component 1's joint origin")?, snap(1, "component 2's joint origin")?);
+            let (mut a, mut b) = (snap(0, "component 1's joint origin")?, snap(1, "component 2's joint origin")?);
+            // A point picked on a Ctrl-locked face faces like that face, corner or edge middle
+            // (a face pick already does).
+            for snap_pt in [&mut a, &mut b] {
+                if let Some(z) = f.dirs.get(&dir_key(snap_pt.at)) {
+                    snap_pt.z = *z;
+                    if snap_pt.param.get("point").is_some() {
+                        snap_pt.param["z"] = json!([z.x, z.y, z.z]);
+                    }
+                }
+            }
             if a.param.get("occurrence").is_some() && a.param.get("occurrence") == b.param.get("occurrence") {
                 return Err("the two origins are on the same component".into());
             }

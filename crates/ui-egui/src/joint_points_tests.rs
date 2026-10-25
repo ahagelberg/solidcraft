@@ -32,6 +32,8 @@ fn ctrl_over_a_face_locks_the_pick_to_its_points() {
     assert_eq!(lock.points.len(), 9, "{:?}", lock.points);
     assert_eq!(lock.chosen.map(|i| lock.points[i].kind), Some(Kind::Centre), "the middle of the face was not taken");
     assert!(matches!(h.app.viewport.hover, Some(Hit::Face { .. })), "the centre did not hover as the face's point: {:?}", h.app.viewport.hover);
+    // The face's own normal: the direction a joint on it takes.
+    assert!(lock.normal.dist(solidcraft_engine::geom::Vec3::Z) < 1e-6, "{:?}", lock.normal);
 }
 
 #[test]
@@ -45,8 +47,14 @@ fn ctrl_near_a_corner_takes_the_corner() {
     h.step(&json!({ "move": [corner[0] + dx / len * 2.0, corner[1] + dy / len * 2.0], "ctrl": true })).unwrap();
     let lock = h.app.viewport.face_lock.clone().expect("Ctrl near the corner did not lock a face");
     assert_eq!(lock.chosen.map(|i| lock.points[i].kind), Some(Kind::Corner), "{:?}", lock.points);
-    // Taken as a place on the face, so the joint takes the face's direction there.
-    assert!(matches!(h.app.viewport.hover, Some(Hit::Face { .. })), "the locked corner is not a place on the face: {:?}", h.app.viewport.hover);
+    // The vertex itself is the pick (not the face's centre), and the face still gives the
+    // direction, which the dialog adds to it.
+    let corner_at = lock.points[lock.chosen.unwrap()].at;
+    match &h.app.viewport.hover {
+        Some(Hit::Vertex { point, .. }) => assert!(point.dist(corner_at) < 1e-6, "{point:?} vs {corner_at:?}"),
+        other => panic!("the locked corner did not hover as its vertex: {other:?}"),
+    }
+    assert!(lock.normal.dist(solidcraft_engine::geom::Vec3::Z) < 1e-6, "{:?}", lock.normal);
 }
 
 /// A few pixels along an edge from its end takes the edge, as Fusion does; the corner itself takes

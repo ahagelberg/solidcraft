@@ -1702,3 +1702,27 @@ fn the_grouped_joints_arrow_lights_up_under_the_pointer() {
     assert_eq!(h.call("ui.click", json!({"x": arrow.center().x, "y": arrow.center().y}))["ok"], true);
     assert!(!joints_open(&h.app, 1201, JointRun::Loose), "and groups them again");
 }
+/// A point picked on a Ctrl-locked face keeps that face's direction: the vertex is the joint's
+/// point, and the joint runs perpendicular to the face through it (not along world Z, and not from
+/// the face's centre).
+#[test]
+fn a_point_picked_on_a_locked_face_keeps_the_faces_direction() {
+    let app = two_boxes();
+    let mut d = app.dialog.clone().unwrap_or_else(|| {
+        let mut a = two_boxes();
+        a.start("joint.create");
+        a.dialog.clone().expect("the Joint dialog")
+    });
+    let corner = Vec3::new(20.0, 0.0, 20.0);
+    d.pick(&app.session, Sel::Vertex { body: "A".into(), point: corner });
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    let camera_side = Vec3::new(0.0, 1.0, 0.0);
+    if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
+        f.dirs.insert(crate::dialogs_assembly::dir_key(corner), camera_side);
+    }
+    let p = apply_commands(&app, &d).unwrap().remove(0).1;
+    // The point is the corner itself…
+    assert_eq!(p["a"]["point"], json!([corner.x, corner.y, corner.z]), "{p}");
+    // …and the direction is the face's, not a default.
+    assert_eq!(p["a"]["z"], json!([camera_side.x, camera_side.y, camera_side.z]), "{p}");
+}
