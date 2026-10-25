@@ -1727,6 +1727,7 @@
   "designs.delete_open": "削除する前にデザインを閉じてください",
   "designs.description": "説明",
   "designs.drop_folder": "フォルダではなくデザインファイルをドロップしてください",
+  "designs.drop_insert": "「{name}」を挿入",
   "designs.drop_unknown": "このファイルはデザイン、STEP、メッシュのいずれでもありません",
   "designs.duplicate_name": "リポジトリ名は一意である必要があります。",
   "designs.empty": "このフォルダにデザインはありません",
