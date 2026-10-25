@@ -134,19 +134,26 @@ impl Browser {
         let mut switch = None;
         let mut browse = None;
         let mut create = false;
+        let mut combo_center = None;
         // The repository, then its folders down to the one shown: every link is a repository
         // folder, so nothing outside one can be reached.
-        let combo = egui::ComboBox::from_id_salt("designs_browse_repository")
-            .width(ui.available_width() - 4.0)
-            .selected_text(RichText::new(self.root_name.clone()).size(12.5).strong())
-            .show_ui(ui, |ui| {
-                for repository in &self.repositories {
-                    if ui.selectable_label(repository.id == self.repository, &repository.name).clicked() {
-                        switch = Some(repository.id.clone());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(crate::i18n::tr("designs.repository")).size(12.0).color(t.text_dim));
+            let combo = egui::ComboBox::from_id_salt("designs_browse_repository")
+                .width(ui.available_width() - 4.0)
+                .selected_text(RichText::new(self.root_name.clone()).size(12.5).strong())
+                .show_ui(ui, |ui| {
+                    for repository in &self.repositories {
+                        if ui.selectable_label(repository.id == self.repository, &repository.name).clicked() {
+                            switch = Some(repository.id.clone());
+                        }
                     }
-                }
-            });
-        crate::scenario::publish_handle("designs:browse:repository", combo.response.rect.center());
+                });
+            combo_center = Some(combo.response.rect.center());
+        });
+        if let Some(center) = combo_center {
+            crate::scenario::publish_handle("designs:browse:repository", center);
+        }
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
             if ui.link(RichText::new(&self.root_name).size(12.0)).on_hover_text(self.root.to_string_lossy()).clicked() {
