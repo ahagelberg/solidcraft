@@ -565,3 +565,64 @@ fn the_row_reports_the_version_the_file_holds() {
     ]))
     .unwrap();
 }
+
+/// Drag a row of the panel out over the document: to the right of the panel, clear of the toolbar.
+fn drag_row_out_of_the_panel(h: &mut Harness, handle: &str, drop: egui::Pos2) {
+    let row = solidcraft_ui_egui::scenario::handle_at(handle).unwrap_or_else(|| panic!("{handle} was not drawn"));
+    h.run(&json!([{ "drag": [[f64::from(row.x), f64::from(row.y)], [f64::from(drop.x), f64::from(drop.y)]], "steps": 10 }])).unwrap();
+    // The release is handled between frames: let the app see it.
+    h.frames(3);
+}
+
+/// A point in the document, right of the panel.
+fn document_point() -> egui::Pos2 {
+    let panel = solidcraft_ui_egui::scenario::rect_of("designs:panel").expect("the panel was drawn");
+    egui::pos2(panel.right() + 320.0, 620.0)
+}
+
+/// A design with a body in the repository (an empty one cannot be linked), then a new blank design
+/// to drop it into.
+fn design_to_insert(h: &mut Harness) {
+    h.run(&json!([
+        { "call": "engine.execute", "params": { "command": "solid.box", "params": { "length": 10, "width": 10, "height": 10 } } },
+        { "call": "engine.execute", "params": { "command": "file.save_as", "params": { "path": "$DIR/Plate.solidcraft" } } },
+        { "call": "engine.execute", "params": { "command": "file.new", "params": {} } }
+    ]))
+    .unwrap();
+    assert!(h.app.session.doc.components.is_empty(), "the new design already has a component");
+}
+
+#[test]
+fn a_design_dragged_out_of_the_panel_is_inserted_into_the_open_design() {
+    let mut h = panel();
+    design_to_insert(&mut h);
+    h.run(&json!([{ "until": { "shown_handles": ["designs:row:Plate"] } }])).unwrap();
+    drag_row_out_of_the_panel(&mut h, "designs:row:Plate", document_point());
+    assert_eq!(h.app.session.doc.components.len(), 1, "the dropped design did not become a component: {:?}", h.app.status);
+    assert_eq!(h.app.session.doc.components[0].name, "Plate", "the component is not the dropped design");
+}
+
+#[test]
+fn a_tree_row_can_be_dragged_into_the_open_design_too() {
+    let mut h = panel();
+    h.app.preferences.designs_tree = true;
+    h.frames(4);
+    design_to_insert(&mut h);
+    h.run(&json!([
+        { "click": { "handle": "designs:tree-toggle:Test" } },
+        { "until": { "shown_handles": ["designs:row:Plate"] } }
+    ]))
+    .unwrap();
+    drag_row_out_of_the_panel(&mut h, "designs:row:Plate", document_point());
+    assert_eq!(h.app.session.doc.components.len(), 1, "the tree row did not insert the design: {:?}", h.app.status);
+}
+
+#[test]
+fn a_row_let_go_over_the_panel_inserts_nothing() {
+    let mut h = panel();
+    design_to_insert(&mut h);
+    h.run(&json!([{ "until": { "shown_handles": ["designs:row:Plate"] } }])).unwrap();
+    let panel = solidcraft_ui_egui::scenario::rect_of("designs:panel").expect("the panel was drawn");
+    drag_row_out_of_the_panel(&mut h, "designs:row:Plate", egui::pos2(panel.center().x, panel.bottom() - 40.0));
+    assert!(h.app.session.doc.components.is_empty(), "a drag that stayed on the panel inserted the design");
+}

@@ -20,6 +20,8 @@ use crate::theme::Tokens;
 #[derive(Clone)]
 pub struct DesignDrag {
     pub path: String,
+    /// The row's name, for the hint that follows the pointer while it is dragged.
+    pub name: String,
 }
 
 /// The panel's transient state (the settings it shows live in `Prefs` and `UiState`).
@@ -244,6 +246,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let rect = panel.response.rect;
     crate::scenario::publish_rect("designs:panel", rect);
     app.designs.panel_rect = Some(rect);
+    drag_chip(app, ui.ctx());
     // The panel has the keyboard once it is clicked in (F2 renames its rows, not the model's).
     if ui.ctx().input(|i| i.pointer.any_pressed()) {
         app.designs.focused_panel = ui.ctx().input(|i| i.pointer.interact_pos()).is_some_and(|p| rect.contains(p));
@@ -904,6 +907,11 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             let (rect, response) = row_response(app, ui, &row.path, ROW_TREE, true);
             crate::scenario::publish_handle(&format!("designs:row:{}", row.name), rect.center());
             crate::scenario::publish_rect(&format!("designs:row:{}", row.name), rect);
+            // A design or an importable file leaves the tree the same way a list row does: let go
+            // over the document, it becomes a component of the open design.
+            if !row.folder && response.drag_started() {
+                egui::DragAndDrop::set_payload(ui.ctx(), DesignDrag { path: row.path.clone(), name: row.name.clone() });
+            }
             let indent = rect.left() + 10.0 + 14.0 * row.depth as f32;
             if row.folder {
                 let open = app.designs.tree.contains(&row.path);
@@ -1142,7 +1150,7 @@ fn design_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, design: &Desig
     crate::scenario::publish_handle(&format!("designs:row:{}", design.name), rect.center());
     crate::scenario::publish_rect(&format!("designs:row:{}", design.name), rect);
     if response.drag_started() {
-        egui::DragAndDrop::set_payload(ui.ctx(), DesignDrag { path: design.path.clone() });
+        egui::DragAndDrop::set_payload(ui.ctx(), DesignDrag { path: design.path.clone(), name: design.name.clone() });
     }
     if thumbnails {
         // A design shows its own thumbnail; a file SolidCraft imports has none, so it shows the
@@ -1530,14 +1538,39 @@ fn same_path(a: Option<&str>, b: &str) -> bool {
     full(a) == full(b)
 }
 
-/// A row released after a drag: insert it into the design under the pointer.
+/// A row released after a drag: insert it into the design under the pointer. Let go over the
+/// panel itself, the drag is cancelled instead: a row nudged off a row is not an insert.
 fn accept_drag(app: &mut SolveApp, ctx: &egui::Context) {
     if !ctx.input(|i| i.pointer.any_released()) {
+        return;
+    }
+    let over_panel = ctx.pointer_latest_pos().is_some_and(|p| app.designs.panel_rect.is_some_and(|r| r.contains(p)));
+    if over_panel {
+        // Give the payload up, so nothing takes it later.
+        egui::DragAndDrop::clear_payload(ctx);
         return;
     }
     if let Some(payload) = egui::DragAndDrop::take_payload::<DesignDrag>(ctx) {
         insert_design(app, &payload.path);
     }
+}
+
+/// Beside the pointer while a row is dragged over the document: what letting go does.
+fn drag_chip(app: &SolveApp, ctx: &egui::Context) {
+    let Some(payload) = egui::DragAndDrop::payload::<DesignDrag>(ctx) else { return };
+    let Some(at) = ctx.pointer_latest_pos() else { return };
+    // Over the panel the row stays in the panel: no insert is offered there.
+    if app.designs.panel_rect.is_some_and(|r| r.contains(at)) {
+        return;
+    }
+    let t = Tokens::get();
+    let text = crate::i18n::format("designs.drop_insert", &[("name", &payload.name)]);
+    let galley = ctx.fonts_mut(|f| f.layout_no_wrap(text, egui::FontId::proportional(12.0), t.text));
+    let rect = egui::Rect::from_min_size(at + vec2(16.0, 12.0), galley.size() + vec2(14.0, 8.0));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("designs-drag-chip")));
+    painter.rect_filled(rect, t.radius_sm, t.panel_header);
+    painter.rect_stroke(rect, t.radius_sm, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    painter.galley(rect.min + vec2(7.0, 4.0), galley, t.text);
 }
 
 /// A save changed a design's picture: show the new one next time.
