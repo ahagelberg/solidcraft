@@ -988,6 +988,7 @@
   "designs.delete_open": "Close the design before deleting it",
   "designs.description": "Description",
   "designs.drop_folder": "Drop a design file, not a folder",
+  "designs.drop_insert": "Insert “{name}”",
   "designs.drop_unknown": "That file is not a design, STEP or mesh file",
   "designs.duplicate": "Duplicate",
   "designs.duplicate_name": "Repository names must be unique.",

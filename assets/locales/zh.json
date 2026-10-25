@@ -988,6 +988,7 @@
   "designs.delete_open": "删除前请先关闭设计",
   "designs.description": "描述",
   "designs.drop_folder": "请拖入设计文件，而不是文件夹",
+  "designs.drop_insert": "插入“{name}”",
   "designs.drop_unknown": "该文件不是设计、STEP 或网格文件",
   "designs.duplicate": "创建副本",
   "designs.duplicate_name": "仓库名称必须唯一。",
