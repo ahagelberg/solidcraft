@@ -77,3 +77,57 @@ fn a_pointer_along_an_edge_takes_the_edge_while_the_corner_takes_the_vertex() {
     h.step(&json!({ "move": corner })).unwrap();
     assert!(matches!(h.app.viewport.hover, Some(Hit::Vertex { .. })), "the corner itself did not take the vertex: {:?}", h.app.viewport.hover);
 }
+
+/// Ctrl locks one face: crossing its edge (the pointer now over the face next door) keeps the
+/// locked face, its points and its direction, so no other face highlights or steers the joint.
+#[test]
+fn the_locked_face_stays_while_the_pointer_crosses_its_edge() {
+    let mut h = joint_on_a_box();
+    let centre = h.at(&json!({"world": [10.0, 10.0, 20.0]})).unwrap();
+    h.step(&json!({ "move": centre, "ctrl": true })).unwrap();
+    let top = h.app.viewport.face_lock.clone().expect("Ctrl over the top face did not lock it");
+    assert!(top.normal.dist(solidcraft_engine::geom::Vec3::Z) < 1e-6, "{:?}", top.normal);
+
+    // Ten pixels past the near edge: the pointer is over a side face, near the top's own points.
+    let edge = h.at(&json!({"world": [10.0, 0.0, 20.0]})).unwrap();
+    let (dx, dy) = (edge[0] - centre[0], edge[1] - centre[1]);
+    let len = (dx * dx + dy * dy).sqrt();
+    assert!(len > 20.0, "the face is only {len:.1} px across on screen");
+    h.step(&json!({ "move": [edge[0] + dx / len * 10.0, edge[1] + dy / len * 10.0], "ctrl": true })).unwrap();
+    let lock = h.app.viewport.face_lock.clone().expect("the face lock was dropped at its edge");
+    assert_eq!((lock.body.as_str(), lock.face), (top.body.as_str(), top.face), "the lock jumped to the face under the pointer");
+    assert!(lock.normal.dist(solidcraft_engine::geom::Vec3::Z) < 1e-6, "the direction came from another face: {:?}", lock.normal);
+}
+
+/// The whole way through: a corner clicked while Ctrl locks the top face is the joint's point, and
+/// the joint is made facing the way the face does (not along world Z, not toward another face).
+#[test]
+fn a_corner_clicked_on_a_locked_face_takes_that_faces_direction() {
+    let mut h = joint_on_a_box();
+    let corner = h.at(&json!({"world": [0.0, 0.0, 20.0]})).unwrap();
+    let centre = h.at(&json!({"world": [10.0, 10.0, 20.0]})).unwrap();
+    let (dx, dy) = (centre[0] - corner[0], centre[1] - corner[1]);
+    let len = (dx * dx + dy * dy).sqrt();
+    let at = [corner[0] + dx / len * 2.0, corner[1] + dy / len * 2.0];
+    h.step(&json!({ "move": at, "ctrl": true })).unwrap();
+    h.step(&json!({ "click": at, "ctrl": true })).unwrap();
+    let d = h.app.dialog.clone().expect("the Joint dialog stayed open");
+    let crate::dialogs::Kind::Assembly(crate::dialogs_assembly::Asm::Joint(f)) = &d.kind else { panic!("not the joint form") };
+    assert_eq!(f.dirs.len(), 1, "the pick kept no direction: {:?}", f.dirs);
+    for z in f.dirs.values() {
+        assert!(z.dist(solidcraft_engine::geom::Vec3::Z) < 1e-6, "the direction is not the face's: {z:?}");
+    }
+}
+
+/// The arrow's direction is the very direction the joint takes: both come from the dialog's face
+/// snap, so a corner pick cannot show one axis and joint along another.
+#[test]
+fn the_locked_faces_direction_is_the_direction_the_joint_takes() {
+    let mut h = joint_on_a_box();
+    let centre = h.at(&json!({"world": [10.0, 10.0, 20.0]})).unwrap();
+    h.step(&json!({ "move": centre, "ctrl": true })).unwrap();
+    let lock = h.app.viewport.face_lock.clone().expect("Ctrl over the face did not lock it");
+    let pick = solidcraft_engine::Sel::Face { body: lock.body.clone(), index: lock.face, point: lock.points[0].at };
+    let joint_dir = crate::dialogs_assembly::snap_of(&h.app.session, &pick).expect("the face's snap").z;
+    assert!(lock.normal.dist(joint_dir) < 1e-9, "the arrow shows {:?}, the joint would take {joint_dir:?}", lock.normal);
+}

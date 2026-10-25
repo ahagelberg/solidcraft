@@ -12,6 +12,10 @@ use crate::viewport::{Hit, Proj};
 
 /// How near the pointer (in points) a face point must be to be taken while the face is locked.
 pub const REACH: f32 = 14.0;
+/// How far the pointer may stray from the locked face's points and still keep that face: Ctrl
+/// locks one face, so moving across its edge must not hand the pick (and its direction) to the
+/// face next door.
+pub const KEEP: f32 = 70.0;
 
 /// The kind of point a joint can take on a face.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,15 +76,25 @@ pub fn takes_points(accept: crate::selection::Accept) -> bool {
 
 /// The face under the pointer, locked to its points with the one nearest the pointer chosen when
 /// it is within [`REACH`].
-pub fn lock(app: &crate::SolveApp, hits: &[Hit], proj: &Proj, pointer: Pos2) -> Option<Lock> {
-    let face = hits.iter().find(|h| matches!(h, Hit::Face { .. }))?;
-    let Hit::Face { body, index, .. } = face else { return None };
+pub fn lock(app: &crate::SolveApp, hits: &[Hit], proj: &Proj, pointer: Pos2, keep: Option<&Lock>) -> Option<Lock> {
+    // The face stays the one Ctrl was held over while the pointer is near its points, whatever
+    // face lies under the pointer: no other face highlights or gives the direction.
+    let kept =
+        keep.filter(|k| k.points.iter().filter_map(|p| proj.to_screen(p.at)).map(|s| s.distance(pointer)).fold(f32::INFINITY, f32::min) <= KEEP);
+    let (body, index) = match kept {
+        Some(k) => (k.body.clone(), k.face),
+        None => {
+            let Hit::Face { body, index, .. } = hits.iter().find(|h| matches!(h, Hit::Face { .. }))? else { return None };
+            (body.clone(), *index)
+        }
+    };
+    let (body, index) = (&body, index);
     let st = crate::open_meshing::shown_world(app);
     let b = st.body(body)?;
     let (mesh, place) = b.mesh_in_place();
     let moved = !solidcraft_engine::doc::is_identity(&place);
     let at = |p: Vec3| if moved { solidcraft_engine::doc::apply_point(&place, p) } else { p };
-    let points: Vec<Point> = face_points(&mesh, *index)
+    let points: Vec<Point> = face_points(&mesh, index)
         .into_iter()
         .map(|mut p| {
             p.at = at(p.at);
@@ -102,11 +116,22 @@ pub fn lock(app: &crate::SolveApp, hits: &[Hit], proj: &Proj, pointer: Pos2) -> 
             }
         }
     }
-    let normal = {
-        let n = face_normal(&mesh, *index);
-        if moved { solidcraft_engine::doc::apply_vector(&place, n) } else { n }
-    };
-    Some(Lock { body: body.clone(), face: *index, points, chosen, normal })
+    // The direction the joint will take on this face, from the same place the dialog takes it: the
+    // pick a face makes (a plane's normal, a cylinder's axis), so the arrow and the joint agree.
+    let kept_normal = kept.map(|k| k.normal);
+    let normal = kept_normal.unwrap_or_else(|| {
+        let on_face = hits.iter().find_map(|h| if let Hit::Face { point, .. } = h { Some(*point) } else { None });
+        let on_face = on_face.or_else(|| points.iter().find(|p| p.kind == Kind::Centre).map(|p| p.at));
+        let pick = solidcraft_engine::Sel::Face { body: body.clone(), index, point: on_face.unwrap_or_default() };
+        let n = crate::dialogs_assembly::snap_of(&app.session, &pick).map(|s| s.z);
+        // A face with no snap of its own falls back to the normal of the triangles it is drawn
+        // with (moved back to where the part stands).
+        n.unwrap_or_else(|| {
+            let raw = face_normal(&mesh, index);
+            if moved { solidcraft_engine::doc::apply_vector(&place, raw) } else { raw }
+        })
+    });
+    Some(Lock { body: body.clone(), face: index, points, chosen, normal })
 }
 
 /// The face's outward normal, from the triangles it is drawn with.
