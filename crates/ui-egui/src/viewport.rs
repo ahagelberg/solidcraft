@@ -4369,16 +4369,28 @@ fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
         }
     }
     // The points of a locked face (Ctrl held): every one a joint can take, the chosen one lit.
+    // Each kind has its own mark, so a corner, an edge's middle and the centre read apart.
     if let Some(lock) = &app.viewport.face_lock {
         for (i, p) in lock.points.iter().enumerate() {
             if let Some(s) = proj.to_screen(p.at) {
                 let chosen = lock.chosen == Some(i);
-                painter.circle(
-                    s,
-                    if chosen { 5.0 } else { 3.0 },
-                    if chosen { t.sel_vertex } else { t.hover_edge_halo },
-                    Stroke::new(1.2, t.hover_edge),
-                );
+                let fill = if chosen { t.sel_vertex } else { t.hover_edge_halo };
+                let stroke = Stroke::new(1.2, t.hover_edge);
+                let size = if chosen { 5.0 } else { 3.0 };
+                match p.kind {
+                    crate::joint_points::Kind::Corner => {
+                        let r = egui::Rect::from_center_size(s, vec2(size * 2.0, size * 2.0));
+                        painter.rect_filled(r, 1.0, fill);
+                        painter.rect_stroke(r, 1.0, stroke, egui::StrokeKind::Inside);
+                    }
+                    crate::joint_points::Kind::EdgeMid => {
+                        painter.circle(s, size, fill, stroke);
+                    }
+                    crate::joint_points::Kind::Centre => {
+                        painter.circle(s, size + 1.0, fill, stroke);
+                        painter.circle_stroke(s, size + 3.5, Stroke::new(1.0, t.hover_edge));
+                    }
+                }
             }
         }
     }
