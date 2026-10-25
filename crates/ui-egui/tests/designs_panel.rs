@@ -355,7 +355,7 @@ fn save_as_stays_in_the_repository_and_starts_where_the_panel_shows() {
         { "click": { "handle": "designs:save:name" } },
         { "key": "a", "cmd": true },
         { "text": "../escape" },
-        { "click": { "handle": "designs:save:save" } }
+        { "click": { "handle": "dialog:ok" } }
     ]))
     .unwrap();
     assert!(h.app.save_to_repo.is_some(), "a name with a folder in it closed the dialog");
@@ -379,11 +379,11 @@ fn save_as_stays_in_the_repository_and_starts_where_the_panel_shows() {
         { "click": { "handle": "designs:save:name" } },
         { "key": "a", "cmd": true },
         { "text": "plate" },
-        { "click": { "handle": "designs:save:save" } }
+        { "click": { "handle": "dialog:ok" } }
     ]))
     .unwrap();
     assert!(h.app.save_to_repo.as_ref().is_some_and(|d| d.asks_to_replace()), "the first click replaced it");
-    h.run(&json!([{ "click": { "handle": "designs:save:save" } }])).unwrap();
+    h.run(&json!([{ "click": { "handle": "dialog:ok" } }])).unwrap();
     assert!(h.app.save_to_repo.is_none(), "the second click did not replace");
 }
 

@@ -773,7 +773,7 @@ pub(crate) fn save_as(app: &mut SolveApp) {
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
     // With repositories on, Save As is the repository's own dialog: it can only write inside the
     // repository, starting at the folder the panel shows.
-    if crate::designs_save::open(app, extension != solidcraft_engine::io::DESIGN_EXT) {
+    if extension == solidcraft_engine::io::DESIGN_EXT && crate::designs_save::open(app) {
         return;
     }
     let name = format!("{}.{extension}", app.session.doc.name);
