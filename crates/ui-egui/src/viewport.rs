@@ -4912,6 +4912,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     app.viewport.face_lock = lock;
+    // The edited joint's arrows take a press before the view picks what is under it.
+    crate::joint_arrows::show(app, ui, &proj);
     wake_centre(app, &hits);
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up. A mode lit in the navigation bar or a
@@ -5203,7 +5205,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         {
             dialog.restore_value_focus = true;
         }
-        if resp.clicked() && !held && !reference_pick && !joint_handle_pointer && !app.viewport.draw_drag_handled {
+        if resp.clicked() && !held && !reference_pick && !joint_handle_pointer && !app.viewport.draw_drag_handled && app.viewport.joint_gizmo.is_none() {
             if crate::browser_canvas::click(app, &proj, p) {
                 // Calibrate Canvas: the click sets Point A or B on the image (#9108).
             } else if app.tool.is_some() {
@@ -5619,7 +5621,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::drag_extrude::tick(app);
     crate::drag_extrude::show(app, &painter);
     points_2d(app, &painter, &proj);
-    crate::joint_arrows::show(app, ui, &proj);
     if let Some((plane, sketch)) = crate::sketch_attachment_ui::lost_guide(app)
         && let Some((low, high)) = sketch.bounds()
         && let Some(at) = proj.to_screen(plane.to_world(solidcore_record::Vec2::new((low.x + high.x) * 0.5, high.y)))
