@@ -4405,6 +4405,15 @@ fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
                 }
             }
         }
+        // The direction a joint picked here takes: the face's normal, drawn from the face centre.
+        let centre = lock.points.iter().find(|p| p.kind == crate::joint_points::Kind::Centre).map(|p| p.at);
+        let len = app.cam.half_height() * 0.22;
+        if let Some(c) = centre
+            && let (Some(a), Some(b)) = (proj.to_screen(c), proj.to_screen(c + lock.normal * len))
+        {
+            painter.line_segment([a, b], Stroke::new(2.0, t.accent));
+            painter.circle_filled(b, 3.5, t.accent);
+        }
     }
     if let Some(Hit::Vertex { point, .. }) = &app.viewport.hover
         && let Some(p) = proj.to_screen(*point)
