@@ -79,6 +79,7 @@ fn joint_face_measurements_are_shared_across_motion_samples_and_snap_kinds() {
         limits: Vec::new(),
         flip: true,
         offset: 0.0,
+        lateral: [0.0; 2],
         angle: 0.0,
         suppressed: false,
         exprs: Default::default(),

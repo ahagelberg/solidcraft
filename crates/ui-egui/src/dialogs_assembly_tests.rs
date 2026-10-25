@@ -45,14 +45,13 @@ fn joint_from_two_snaps() {
     // The bottom face of B snaps at its centre, z down.
     let sb = snap_of(&app.session, &d.inputs[1].items[0]).unwrap();
     assert!(sb.at.dist(Vec3::new(40.0, 10.0, 0.0)) < 1e-6 && sb.z.dist(-Vec3::Z) < 1e-9, "{sb:?}");
-    // Offset X: an explicit frame 5 mm along the face.
+    // Offset X: 5 mm across the face, sent with the command; the origin stays where it was picked.
     if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
         f.offset[0] = "5 mm".into();
     }
     let p = apply_commands(&app, &d).unwrap()[0].1.clone();
-    let o = &p["a"]["frame"]["origin"];
-    let at = Vec3::new(o[0].as_f64().unwrap(), o[1].as_f64().unwrap(), o[2].as_f64().unwrap());
-    assert!((at.dist(Vec3::new(10.0, 10.0, 10.0)) - 5.0).abs() < 1e-9, "{p}");
+    assert_eq!(p["offset_x"], json!(5.0), "{p}");
+    assert!(p["a"]["face"].is_array(), "the pick is still the face itself: {p}");
     // OK makes it.
     for (id, p) in apply_commands(&app, &d).unwrap() {
         app.run(&id, p).unwrap();
@@ -890,9 +889,9 @@ fn inch_joint_offsets_limits_and_drive_values_keep_their_units() {
     let (_, p) = apply_commands(&app, &d).unwrap().remove(0);
     assert_eq!(p["offset"], json!("2 mm"));
     assert_eq!(p["limits"], json!([["0 in", "0.5 in"]]));
-    let origin = &p["a"]["frame"]["origin"];
-    let at = Vec3::new(origin[0].as_f64().unwrap(), origin[1].as_f64().unwrap(), origin[2].as_f64().unwrap());
-    assert!((at.dist(Vec3::new(10.0, 10.0, 10.0)) - 6.35).abs() < 1e-9);
+    // 0.25 in across the face, in millimetres, with the origin where it was picked.
+    assert_eq!(p["offset_x"], json!(6.35), "{p}");
+    assert!(p["a"]["face"].is_array(), "the pick is still the face itself: {p}");
     app.run("joint.create", p).unwrap();
     let joint = app.session.doc.assembly.joints[0].id;
     app.start("joint.drive");

@@ -89,6 +89,7 @@ pub mod inference;
 pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
+mod joint_handles;
 mod joint_points;
 #[cfg(test)]
 mod joint_points_tests;

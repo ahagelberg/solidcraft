@@ -2114,3 +2114,28 @@ fn a_parameter_change_solves_the_joints_once() {
     assert!(super::solve_counts::take().0 > 0);
     assert!(near(place(&s, "Bracket", Vec3::new(110.0, 210.0, 0.0)), Vec3::new(180.0, 50.0, 1.0)));
 }
+
+/// A joint's position can be set across its own frame, not only along it: Offset X and Y move B
+/// sideways and Offset Z along the axis, and editing them moves it again.
+#[test]
+fn a_joint_sits_where_its_lateral_offset_says() {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name": "Part", "grounded": false}));
+    let a = json!({"occurrence": 0, "point": [0, 0, 0], "z": [0, 0, 1]});
+    let b = json!({"occurrence": "Part", "point": [0, 0, 0], "z": [0, 0, 1]});
+    let made = run(&mut s, "joint.create", json!({"type": "rigid", "a": a, "b": b, "offset_x": 12.0, "offset_y": -5.0, "quiet": true}));
+    let joint = made["joint"].as_u64().unwrap();
+    // Mated at the origin, B is now a 12, -5 move across A's frame: 13 mm away.
+    let at = place(&s, "Part", Vec3::ZERO);
+    assert!((at.len() - 13.0).abs() < 1e-6, "{at:?}");
+
+    // Editing the numbers moves the joint there: no lateral, 7 mm along it.
+    run(&mut s, "joint.edit", json!({"joint": joint, "offset_x": 0.0, "offset_y": 0.0, "offset": 7.0}));
+    let at = place(&s, "Part", Vec3::ZERO);
+    assert!((at.len() - 7.0).abs() < 1e-6, "{at:?}");
+    // And the numbers are what the joint holds, so the dialog shows them back.
+    let listed = run(&mut s, "joint.list", json!({}));
+    assert!(listed.get("joints").is_some(), "{listed}");
+    let j = s.doc.assembly.joints.iter().find(|j| j.id == joint).expect("the joint");
+    assert_eq!((j.lateral, j.offset), ([0.0, 0.0], 7.0));
+}

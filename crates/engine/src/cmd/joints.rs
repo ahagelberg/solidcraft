@@ -27,7 +27,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          (ties only some directions or points, made where the parts are; several between two parts add up); a, b: joint origins ({occurrence, face|circle|edge|point: [x,y,z] in world, or face|circle: \"<face name>\"; z? for a point, end?, x? as joint.origin} | origin name); \
          values?: [angles in deg or expressions, distances]; limits?: [[min, max] | null…]; flip?: bool (default false: the origins are mated, \
          b's z against a's as two faces meet; true: b's z along a's, so two origins given at one point with the same z stay as they are); \
-         offset?: mm or an expression; angle?: deg or an expression (an angle relation's tilt from mated; for other joints the default \
+         offset?: mm or an expression; offset_x?, offset_y?: mm across a's frame (the joint's position on the other two axes); angle?: deg or an expression (an angle relation's tilt from mated; for other joints the default \
          is none, or a half turn where that turns b less, so faces that already meet stay as they are); name?; quiet?: bool (leave \
          out dof and fixed). An expression (text) is \
          kept with the joint and worked out again whenever the design changes, so the joint follows the parameters it names; a joint whose \
@@ -77,7 +77,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("joint.limits", "Joint Limits", limits).icon("joint").params("joint; index?: value index (default 0); min?, max? (omit both to clear)"),
     CommandSpec::new("joint.edit", "Edit Joint", edit)
         .icon("edit")
-        .params("joint; type?, flip?, offset?, angle? (a number, or an expression the joint then follows), suppressed?, name?"),
+        .params("joint; type?, flip?, offset?, offset_x?, offset_y?, angle? (a number, or an expression the joint then follows), suppressed?, name?"),
     CommandSpec::new("joint.delete", "Delete Joint", delete).icon("delete").params("joint: id|name (or origin: name, link: index)"),
     CommandSpec::new("joint.list", "List Joints", list).icon("list").noundo().params(
         "→ joints (type, occurrences, values, limits; expressions: {offset?, angle?, values?} when they were typed as expressions), origins, links, degrees of freedom, conflicts, floating: [{occurrences, joints}] \
@@ -709,6 +709,17 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => value(s, v, false, cmd)?,
         None => 0.0,
     };
+    // Across A's frame (x, y): the joint's position on the other two axes.
+    let lateral = [
+        match p.get("offset_x") {
+            Some(v) => value(s, v, false, cmd)?,
+            None => 0.0,
+        },
+        match p.get("offset_y") {
+            Some(v) => value(s, v, false, cmd)?,
+            None => 0.0,
+        },
+    ];
     let angle = match p.get("angle") {
         Some(v) => Some(value(s, v, true, cmd)?),
         None => None,
@@ -723,6 +734,7 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
         limits: limits_param(s, p, kind, cmd)?,
         flip: bool_(p, "flip").unwrap_or(false),
         offset,
+        lateral,
         angle: angle.unwrap_or(0.0),
         suppressed: false,
         exprs: JointExprs { offset: typed(p.get("offset")), angle: typed(p.get("angle")), values: value_exprs(p) },
@@ -775,6 +787,7 @@ fn as_built(s: &mut Session, p: &Value) -> Result<Value> {
         limits: limits_param(s, p, kind, cmd)?,
         flip: true, // as built: the origins coincide as they are, not mated
         offset: 0.0,
+        lateral: [0.0; 2],
         angle: 0.0,
         suppressed: false,
         exprs: Default::default(),
@@ -1280,6 +1293,16 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(value(s, v, false, cmd)?),
         None => None,
     };
+    let lateral = [
+        match p.get("offset_x") {
+            Some(v) => Some(value(s, v, false, cmd)?),
+            None => None,
+        },
+        match p.get("offset_y") {
+            Some(v) => Some(value(s, v, false, cmd)?),
+            None => None,
+        },
+    ];
     let angle = match p.get("angle") {
         Some(v) => Some(value(s, v, true, cmd)?),
         None => None,
@@ -1303,6 +1326,12 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(o) = offset {
         j.offset = o;
         j.exprs.offset = typed(p.get("offset"));
+    }
+    if let Some(x) = lateral[0] {
+        j.lateral[0] = x;
+    }
+    if let Some(y) = lateral[1] {
+        j.lateral[1] = y;
     }
     if let Some(a) = angle {
         j.angle = a;
