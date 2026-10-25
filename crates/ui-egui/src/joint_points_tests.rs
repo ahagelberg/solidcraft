@@ -45,7 +45,8 @@ fn ctrl_near_a_corner_takes_the_corner() {
     h.step(&json!({ "move": [corner[0] + dx / len * 2.0, corner[1] + dy / len * 2.0], "ctrl": true })).unwrap();
     let lock = h.app.viewport.face_lock.clone().expect("Ctrl near the corner did not lock a face");
     assert_eq!(lock.chosen.map(|i| lock.points[i].kind), Some(Kind::Corner), "{:?}", lock.points);
-    assert!(matches!(h.app.viewport.hover, Some(Hit::Vertex { .. })), "the locked corner did not hover as a vertex: {:?}", h.app.viewport.hover);
+    // Taken as a place on the face, so the joint takes the face's direction there.
+    assert!(matches!(h.app.viewport.hover, Some(Hit::Face { .. })), "the locked corner is not a place on the face: {:?}", h.app.viewport.hover);
 }
 
 /// A few pixels along an edge from its end takes the edge, as Fusion does; the corner itself takes

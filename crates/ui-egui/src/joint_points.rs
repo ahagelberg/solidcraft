@@ -29,8 +29,6 @@ pub enum Kind {
 pub struct Point {
     pub at: Vec3,
     pub kind: Kind,
-    /// The edge this point is the middle of (0 for a corner or the centre).
-    pub edge: usize,
 }
 
 /// What holding Ctrl over a face locks the pick to.
@@ -46,16 +44,11 @@ pub struct Lock {
 
 impl Lock {
     /// The hit the pointer makes while the face is locked: the chosen point, or the face where the
-    /// pointer is.
+    /// pointer is. Every point is a place on the face, not a corner or an edge of its own, so the
+    /// joint takes the face's direction (perpendicular to it) wherever the point sits on it.
     pub fn hit(&self, at: Vec3) -> Hit {
-        match self.chosen.and_then(|i| self.points.get(i)) {
-            Some(p) => match p.kind {
-                Kind::Corner => Hit::Vertex { body: self.body.clone(), point: p.at },
-                Kind::EdgeMid => Hit::Edge { body: self.body.clone(), index: p.edge, mid: p.at },
-                Kind::Centre => Hit::Face { body: self.body.clone(), index: self.face, point: p.at },
-            },
-            None => Hit::Face { body: self.body.clone(), index: self.face, point: at },
-        }
+        let point = self.chosen.and_then(|i| self.points.get(i)).map_or(at, |p| p.at);
+        Hit::Face { body: self.body.clone(), index: self.face, point }
     }
 }
 
@@ -120,13 +113,13 @@ pub fn face_points(mesh: &solidcraft_engine::geom::Mesh, face: usize) -> Vec<Poi
         }
         let mid = crate::selection::polyline_mid(line);
         if mid.is_finite() {
-            points.push(Point { at: mid, kind: Kind::EdgeMid, edge: i });
+            points.push(Point { at: mid, kind: Kind::EdgeMid });
         }
     }
-    let mut all: Vec<Point> = corners.iter().map(|c| Point { at: *c, kind: Kind::Corner, edge: 0 }).collect();
+    let mut all: Vec<Point> = corners.iter().map(|c| Point { at: *c, kind: Kind::Corner }).collect();
     all.append(&mut points);
     if let Some(centre) = centre(&corners) {
-        all.push(Point { at: centre, kind: Kind::Centre, edge: 0 });
+        all.push(Point { at: centre, kind: Kind::Centre });
     }
     all
 }
