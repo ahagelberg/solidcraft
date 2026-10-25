@@ -3148,7 +3148,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let lock = if ui.input(|i| i.modifiers.ctrl || i.modifiers.command)
         && app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| crate::joint_points::takes_points(i.accept))
     {
-        hover.filter(|_| inside && !navigating).and_then(|p| crate::joint_points::lock(app, &hits, &proj, p))
+        let keep = app.viewport.face_lock.clone();
+        hover.filter(|_| inside && !navigating).and_then(|p| crate::joint_points::lock(app, &hits, &proj, p, keep.as_ref()))
     } else {
         None
     };
