@@ -111,6 +111,9 @@ pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
 pub(crate) mod joint_handles;
+mod joint_points;
+#[cfg(test)]
+mod joint_points_tests;
 pub mod keymap;
 pub mod kicad_import_dialog;
 mod length_input;
