@@ -52,6 +52,9 @@ pub enum NavMode {
 pub struct ViewportState {
     /// The arrow turning the view that is still down (`navigation::step_key_hold`).
     pub(crate) key_hold: Option<crate::navigation::KeyHold>,
+    /// Ctrl over a face while a snap input is active: the face whose points the pick is locked
+    /// to, and which of them the pointer is on (`joint_points`).
+    pub(crate) face_lock: Option<crate::joint_points::Lock>,
     /// A two-point drawing tool's first point was placed by a press (here) that became a drag:
     /// the release places the second (#1630), unless it lands within [`DRAW_DRAG_MIN`] of the
     /// press. Such a drag was a click that moved on the way (#2448): the release places the
@@ -1802,8 +1805,13 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             bestv.offer(dd, Hit::Vertex { body: String::new(), point: Vec3::ZERO });
         }
     }
-    hits.extend(bestv.hits());
-    hits.extend(beste.hits());
+    // Corners and edges compete on screen distance: a pointer slightly along an edge takes the
+    // edge even at its end, while the corner itself takes the vertex (as Fusion does). A tie goes
+    // to the corner, which is offered first.
+    let mut corners: Vec<(f32, Hit)> = bestv.sorted();
+    corners.extend(beste.sorted());
+    corners.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    hits.extend(corners.into_iter().map(|x| x.1));
     // Origin axes.
     let size = origin_size(app.cam.half_height());
     let mut besta = Near::new(all);
@@ -3124,14 +3132,30 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
     // corner drawn from the origin is the fixed origin, which ends no two curves.
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
+    // Ctrl over a face locks the pick to that face's points (a joint's corners, its edges'
+    // middles and its centre): any of them can be taken, not only one a few pixels from a corner.
+    // A click picks `cand`, so a locked face picks the same point.
+    let lock = if ui.input(|i| i.modifiers.ctrl || i.modifiers.command)
+        && app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| crate::joint_points::takes_points(i.accept))
+    {
+        hover.filter(|_| inside && !navigating).and_then(|p| crate::joint_points::lock(app, &hits, &proj, p))
+    } else {
+        None
+    };
+    // Where on the face the pointer is: the pick a locked face makes when no point is near it.
+    let lock_at = hits.iter().find_map(|h| if let Hit::Face { point, .. } = h { Some(*point) } else { None }).unwrap_or_default();
     let cand = if app.tool.is_some() {
         tool_hover(app, &hits).map(|h| (h, None))
     } else if let Some((hit, sel)) = corner {
         Some((hit, Some(sel)))
+    } else if let Some(lock) = &lock {
+        let hit = lock.hit(lock_at);
+        app.dialog.as_ref().and_then(|d| d.candidate(&app.session, &hit)).map(|sel| (hit, Some(sel)))
     } else {
         candidate(app, &hits).map(|(h, s)| (h, Some(s)))
     };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
+    app.viewport.face_lock = lock;
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up.
     let held =
@@ -4342,6 +4366,20 @@ fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
             && let Some(p) = proj.to_screen(point)
         {
             painter.circle(p, 4.0, t.sel_vertex, Stroke::new(1.5, t.sel_edge));
+        }
+    }
+    // The points of a locked face (Ctrl held): every one a joint can take, the chosen one lit.
+    if let Some(lock) = &app.viewport.face_lock {
+        for (i, p) in lock.points.iter().enumerate() {
+            if let Some(s) = proj.to_screen(p.at) {
+                let chosen = lock.chosen == Some(i);
+                painter.circle(
+                    s,
+                    if chosen { 5.0 } else { 3.0 },
+                    if chosen { t.sel_vertex } else { t.hover_edge_halo },
+                    Stroke::new(1.2, t.hover_edge),
+                );
+            }
         }
     }
     if let Some(Hit::Vertex { point, .. }) = &app.viewport.hover

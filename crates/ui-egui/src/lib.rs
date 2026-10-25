@@ -89,6 +89,9 @@ pub mod inference;
 pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
+mod joint_points;
+#[cfg(test)]
+mod joint_points_tests;
 pub mod keymap;
 mod length_input;
 mod linked_source;
