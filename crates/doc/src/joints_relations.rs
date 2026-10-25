@@ -90,6 +90,7 @@ mod tests {
             limits: Vec::new(),
             flip: false,
             offset: 0.0,
+            lateral: [0.0; 2],
             angle: 0.6,
             suppressed: false,
             exprs: Default::default(),

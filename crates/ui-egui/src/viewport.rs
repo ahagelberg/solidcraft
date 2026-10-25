@@ -80,11 +80,8 @@ pub struct ViewportState {
     /// Ctrl over a face while a snap input is active: the face whose points the pick is locked
     /// to, and which of them the pointer is on (`joint_points`).
     pub(crate) face_lock: Option<crate::joint_points::Lock>,
-    /// A two-point drawing tool's (by preference also the Line tool's, #7247) first point was
-    /// placed by a press (here) that became a drag: the release places the second (#1630), unless
-    /// it lands within [`DRAW_DRAG_MIN`] of the press. Such a drag was a click that moved on the
-    /// way (#2448): the release places the first point instead and the shape goes on by clicks,
-    /// rather than a sliver of a shape.
+    /// A drag along one of the edited joint's arrows (`joint_arrows`).
+    pub(crate) joint_gizmo: Option<crate::joint_arrows::Drag>,
     pub(crate) draw_drag: Option<Pos2>,
     /// The draw-drag release above already placed or kept the tool's point this frame: ignore
     /// egui's ordinary `clicked` for the same release so a second on-click cannot finish the
@@ -5622,6 +5619,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::drag_extrude::tick(app);
     crate::drag_extrude::show(app, &painter);
     points_2d(app, &painter, &proj);
+    crate::joint_arrows::show(app, ui, &proj);
     if let Some((plane, sketch)) = crate::sketch_attachment_ui::lost_guide(app)
         && let Some((low, high)) = sketch.bounds()
         && let Some(at) = proj.to_screen(plane.to_world(solidcore_record::Vec2::new((low.x + high.x) * 0.5, high.y)))

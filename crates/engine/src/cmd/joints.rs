@@ -68,7 +68,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          values?: [angles in deg or expressions, distances]; limits?: [[min, max] | null…]; flip?: bool (default false: the origins are mated, \
          b's z against a's as two faces meet; true: b's z along a's, so two origins given at one point with the same z and x stay as they are; \
          a point origin without x takes its x from z, so give x on both, or use joint.as_built, to keep a turned part where it is); \
-         offset?: mm or an expression; angle?: deg or an expression (an angle relation's tilt from mated; for other joints the default \
+         offset?: mm or an expression; offset_x?, offset_y?: mm across a's frame (the joint's position on the other two axes); angle?: deg or an expression (an angle relation's tilt from mated; for other joints the default \
          is none, or a half turn where that turns b less, so faces that already meet stay as they are); name?; quiet?: bool (leave \
          out dof and fixed). An expression (text) is \
          kept with the joint and worked out again whenever the design changes, so the joint follows the parameters it names; a joint whose \
@@ -169,7 +169,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<EditJointResult>)
         .params(
             "joint; a?, b?: joint origins as joint.create takes them (a side left out keeps its place; the two must stay on different occurrences); \
-             type?, flip?, offset?, angle? (a number, or an expression the joint then follows), suppressed?, name?; the joint re-solves, keeping \
+             type?, flip?, offset?, offset_x?, offset_y?, angle? (a number, or an expression the joint then follows), suppressed?, name?; the joint re-solves, keeping \
              its limits and expressions (a relation's values start again where its parts are); an edit that places it again (not a rename alone) \
              meets a loop it closes as joint.create does, turning an angle a half turn where only that meets it",
         ),
@@ -1062,6 +1062,17 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => value(s, v, false, cmd)?,
         None => 0.0,
     };
+    // Across A's frame (x, y): the joint's position on the other two axes.
+    let lateral = [
+        match p.get("offset_x") {
+            Some(v) => value(s, v, false, cmd)?,
+            None => 0.0,
+        },
+        match p.get("offset_y") {
+            Some(v) => value(s, v, false, cmd)?,
+            None => 0.0,
+        },
+    ];
     let angle = match p.get("angle") {
         Some(v) => Some(value(s, v, true, cmd)?),
         None => None,
@@ -1076,6 +1087,7 @@ fn joint(s: &mut Session, p: &Value) -> Result<Value> {
         limits: limits_param(s, p, kind, cmd)?,
         flip: bool_(p, "flip").unwrap_or(false),
         offset,
+        lateral,
         angle: angle.unwrap_or(0.0),
         suppressed: false,
         exprs: JointExprs { offset: typed(p.get("offset")), angle: typed(p.get("angle")), values: value_exprs(p) },
@@ -1121,6 +1133,7 @@ fn as_built(s: &mut Session, p: &Value) -> Result<Value> {
         limits: limits_param(s, p, kind, cmd)?,
         flip: true, // as built: the origins coincide as they are, not mated
         offset: 0.0,
+        lateral: [0.0; 2],
         angle: 0.0,
         suppressed: false,
         exprs: Default::default(),
@@ -1742,6 +1755,16 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(value(s, v, false, cmd)?),
         None => None,
     };
+    let lateral = [
+        match p.get("offset_x") {
+            Some(v) => Some(value(s, v, false, cmd)?),
+            None => None,
+        },
+        match p.get("offset_y") {
+            Some(v) => Some(value(s, v, false, cmd)?),
+            None => None,
+        },
+    ];
     let angle = match p.get("angle") {
         Some(v) => Some(value(s, v, true, cmd)?),
         None => None,
@@ -1779,6 +1802,12 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(o) = offset {
         j.offset = o;
         j.exprs.offset = typed(p.get("offset"));
+    }
+    if let Some(x) = lateral[0] {
+        j.lateral[0] = x;
+    }
+    if let Some(y) = lateral[1] {
+        j.lateral[1] = y;
     }
     if let Some(a) = angle {
         j.angle = a;

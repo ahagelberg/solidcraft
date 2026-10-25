@@ -528,6 +528,9 @@ pub fn edit_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
     f.angle = j.exprs.angle.clone().unwrap_or_else(|| num(j.angle.to_degrees(), "deg"));
     f.angle_shown = f.angle.clone();
     f.offset[2] = j.exprs.offset.clone().unwrap_or_else(|| crate::length_input::model(&app.session.doc, j.offset));
+    // The position across the joint's frame is kept as it is now: all three axes can be edited.
+    f.offset[0] = crate::length_input::model(&app.session.doc, j.lateral[0]);
+    f.offset[1] = crate::length_input::model(&app.session.doc, j.lateral[1]);
     f.fit_limits(&app.session.doc);
     for (i, l) in f.limits.iter_mut().enumerate() {
         if let Some(Some((lo, hi))) = j.limits.get(i) {
@@ -858,9 +861,6 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 enter |= expr_row(ui, "Angle", &mut f.angle);
                 crate::ui_kit::section(ui, "joint_position", "Position", false, |ui| {
                     for (l, v) in ["Offset X", "Offset Y", "Offset Z"].iter().zip(f.offset.iter_mut()) {
-                        if f.editing.is_some() && *l != "Offset Z" {
-                            continue;
-                        }
                         enter |= expr_row(ui, l, v);
                     }
                 });
@@ -1535,7 +1535,9 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             let limits: Vec<Value> =
                 f.limits.iter().take(jk.dofs().len()).map(|(on, lo, hi)| if *on { json!([lo, hi]) } else { Value::Null }).collect();
             if let Some(id) = f.editing {
-                let mut p = json!({"joint": id, "type": kind, "flip": f.flip, "offset": f.offset[2]});
+                let x = eval(&f.offset[0], ValueKind::Length)?;
+                let y = eval(&f.offset[1], ValueKind::Length)?;
+                let mut p = json!({"joint": id, "type": kind, "flip": f.flip, "offset_x": x, "offset_y": y, "offset": f.offset[2]});
                 if !custom_name.is_empty() {
                     p["name"] = json!(custom_name);
                 }
@@ -1580,11 +1582,10 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
                 return Err("the two origins are on the same component".into());
             }
             let (x, y) = (eval(&f.offset[0], ValueKind::Length)?, eval(&f.offset[1], ValueKind::Length)?);
-            let a_param = if x.abs() > 1e-12 || y.abs() > 1e-12 { shifted(&a, x, y) } else { a.param };
             // Picked origins mate by default (the engine's default: B's z opposite A's, faces
             // meet face to face, a pin goes into its hole); the dialog's Flip is the command's
             // `flip`, which turns B the other way.
-            let mut p = json!({"type": kind, "a": a_param, "b": b.param, "flip": f.flip, "offset": f.offset[2], "angle": f.angle, "limits": limits});
+            let mut p = json!({"type": kind, "a": a_param, "b": b.param, "flip": f.flip, "offset_x": x, "offset_y": y, "offset": f.offset[2], "angle": f.angle, "limits": limits});
             if !custom_name.is_empty() {
                 p["name"] = json!(custom_name);
             }

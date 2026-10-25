@@ -20,6 +20,7 @@ fn joint(id: u64, a: u64, b: u64) -> Joint {
         limits: vec![Some((-1.0, 1.0))],
         flip: true,
         offset: 2.0,
+        lateral: [0.0; 2],
         angle: 0.1,
         suppressed: false,
         exprs: Default::default(),
