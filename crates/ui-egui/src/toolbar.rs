@@ -350,6 +350,13 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         x = home.right() + 8.0;
         app_bar_separator(ui, r, x, "brand");
         x += 16.0;
+        // The Designs panel, left of the File menu (the 3x3 grid).
+        if app.services.designs_panel && app.preferences.repositories_panel {
+            if crate::designs_panel::app_bar_button(app, ui, r, x, idle) {
+                app.ui.show_designs = !app.ui.show_designs;
+            }
+            x += 30.0;
+        }
         // While a file loads the design waits: no menus or commands from the bar.
         // The File menu: a text button (New, Open, Save, Save As, Export…). Its handle keeps the
         // old `appbar:folder` name too, for scripts written against the folder button.
@@ -781,10 +788,20 @@ pub fn save(app: &mut SolveApp) {
         app.tree.capture_prompt = Some(crate::browser::SAVE.into());
         return;
     }
+    // A design opened from an older version loses the versions after it: ask first.
+    if let Some(prompt) = crate::designs_versions::save_prompt(app) {
+        app.version_prompt = Some(prompt);
+        return;
+    }
+    let discard_later = std::mem::take(&mut app.save_discards_later);
     if app.session.path.is_some() {
         // Read-only, or changed on disk since it was opened: Save As, or a question, instead.
         if crate::open_elsewhere::check_save(app) {
-            crate::save_job::start(app, "file.save", json!({}));
+            let mut params = json!({ "cache": true });
+            if discard_later {
+                params["discard_later_versions"] = json!(true);
+            }
+            crate::save_job::start(app, "file.save", params);
         }
     } else {
         save_as(app);
@@ -803,6 +820,11 @@ pub(crate) fn save_copy(app: &mut SolveApp) {
 
 /// Save As offers the open file's own name, not the name stored in the design (#8329).
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
+    // With repositories on, Save As is the repository's own dialog: it can only write inside the
+    // repository, starting at the folder the panel shows.
+    if extension == solidcraft_engine::io::DESIGN_EXT && crate::designs_save::open(app) {
+        return;
+    }
     let name = app.session.save_as_name();
     save_as_named(app, &name, extension);
 }
@@ -811,10 +833,12 @@ fn save_as_named(app: &mut SolveApp, name: &str, extension: &str) {
     let name = format!("{name}.{extension}");
     app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         // A save under way answers a closing tab when it ends.
-        if let Some(path) = path
-            && crate::save_job::start(app, "file.save_as", json!({"path": path}))
-        {
-            return;
+        // A design saved as a design carries its preview, so the Designs panel shows it.
+        if let Some(path) = path {
+            let cache = path.ends_with(solidcraft_engine::io::DESIGN_EXT);
+            if crate::save_job::start(app, "file.save_as", json!({ "path": path, "cache": cache })) {
+                return;
+            }
         }
         crate::documents::saved_for_close(app);
     });
@@ -2341,8 +2365,12 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 }
             }
             Key::F2 => {
-                let at = ctx.input(|i| i.pointer.latest_pos()).unwrap_or(ctx.content_rect().center());
-                crate::context_menu::rename_selection(app, at);
+                // The Designs panel first: with a row picked there, F2 renames that file or
+                // folder (a file browser's F2). Elsewhere it renames the model's selection.
+                if !crate::designs_panel::rename_selected(app, ctx) {
+                    let at = ctx.input(|i| i.pointer.latest_pos()).unwrap_or(ctx.content_rect().center());
+                    crate::context_menu::rename_selection(app, at);
+                }
             }
             Key::F6 => app.animate_view("fit"),
             Key::Backspace if crate::tools::undo_spline_point(app) => {}

@@ -14,6 +14,54 @@
   panel's name for all its commands. Drag a command from the dropdown onto a panel's label
   or empty space to append it; the insertion line shows its destination. Drop onto an existing
   button to insert before it. Buttons can also move between panels, and the layout is saved.
+- **Designs** (left, before the Browser). The grid button left of the File menu shows or hides
+  it. Its top row picks a repository (a folder you keep designs in, with a name and a
+  description; Preferences › **Repositories** adds and edits them, and a new install starts with
+  one at `Documents/SolidCraft`). **Use the Repositories panel** there turns the whole thing off:
+  no button, no panel, and Save As no longer starts in the repository. It is on the start page
+  too, so a design or an importable file is one double-click away from there. Below the repository are
+  the folders, each design with its
+  thumbnail and the date it was last saved; a folder that is missing is made when the panel first
+  shows it, and one that cannot be made says so, with the reason and a **Try Again** button. A
+  folder opens on a double click and the breadcrumb above walks back out: its house is the
+  repository's own folder (the repository's name is in the house's tooltip). **New Folder** makes one.
+  The button at the right of that row switches between the pictures and a compact list: one line
+  per folder or file, with an icon for its kind and no dates or version selector (the same switch
+  is **Show thumbnails** in Preferences › Repositories). The button beside it shows the repository
+  as a **Folder Tree**: its root, and the folders opened under it, each row one line indented by
+  depth (double-click a row, or click its disclosure, to open or close it). A tree starts
+  collapsed; it reads a folder only when it is opened, so a large or network repository is never
+  listed at once.
+  The files SolidCraft can open (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ, glTF, and KiCad boards
+  and projects) are listed beside the designs with an icon for their kind: double-click one to
+  open it as a new design (a board through its import settings), drag it
+  into an open design to place it, or right-click it for the same menu (Insert, Rename, Move…,
+  Copy To…, Duplicate, New Folder Inside…, Delete, Show in Folder) the designs have. **Move** and
+  **Copy To** open the panel's own folder window, which walks the repositories and never leaves
+  them (the repository it starts on is the design's own); **Duplicate** makes a second copy beside
+  it, named `<name> copy`. **Show in Folder** selects the file in the system's file manager. **Save** and **Save As** then use the repository's own
+  dialog instead of the system one: it opens on the folder the panel shows, walks the repository's
+  folders (and can make a new one), and cannot write anywhere outside the repository. A name
+  already taken asks before it replaces the file, and **Plain JSON** saves a `.json` design rather
+  than the container.
+  Every save keeps the version it replaces: the button at the right of a design's row (`V3 ▾`)
+  lists the file's versions, newest first, with the current one marked. Picking an older one asks
+  before it opens it, because saving it deletes the versions after it. Right-click a version for
+  **Promote to Latest** (it becomes the current version and the later ones are deleted) and
+  **Purge Older Versions** (the ones before it are deleted and the rest renumber from 1); both say
+  exactly which versions go and ask first, and the list stays open beside that menu so the version
+  it belongs to is never hidden.
+  Drag the panel's right edge to widen or narrow it; it reopens at that width. Click a row and
+  press **F2** to rename that design or folder, with the whole name selected as a file browser
+  does (elsewhere F2 renames what is selected in the design). Right-click a
+  design for Open, Insert into Current Design, Rename, Move…, Delete and Show in Folder; drag it
+  into an open design to place it as a component. Right-click a folder for Open, Rename, Move…,
+  Delete (only when empty) and Properties…, which edits its description and picture: the picture
+  and description live in the folder's hidden `.solidcraft-project` folder, and every folder is a
+  project in the same way. A design saved from SolidCraft carries its own picture, so the row
+  shows the part rather than a box. A design that is open in a tab cannot be deleted (the menu
+  says so); Close it first. The panel's folder and size are kept between runs, and its dates
+  follow the system's locale and time zone.
 - **Browser** (left). The design as a tree: document settings and units, named views, the
   origin, bodies, sketches, construction planes, canvases, joints and components. The eye shows or
   hides an item, a component's radio button makes it the active component, and right-clicking any

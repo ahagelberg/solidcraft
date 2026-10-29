@@ -351,6 +351,11 @@ pub struct Session {
     /// Opened read-only (`doc.open {read_only}`, the "open elsewhere" notice): saving to its own
     /// file is refused; Save As to another file is how its changes are kept.
     pub read_only: bool,
+    /// The version of the file this design was opened from (`None`: its current version, or a
+    /// design never saved). Saving it replaces the versions after this one.
+    pub version: Option<u32>,
+    /// How many versions the file has (the current one's number), as last read or written.
+    pub versions: u32,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
     /// Interactive loaders may show it provisionally; it never becomes model state.
     pub open_preview: Option<Box<dyn Fn(solidcraft_io::DesignPreview) + Send + Sync>>,
@@ -564,6 +569,8 @@ impl Session {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             disk: None,
             read_only: false,
+            version: None,
+            versions: 0,
             open_preview: None,
             log: Vec::new(),
             revision: 1,
@@ -1404,6 +1411,8 @@ impl Session {
             uid: self.uid,
             disk: self.disk,
             read_only: self.read_only,
+            version: self.version,
+            versions: self.versions,
             open_preview: None,
             saved: self.saved.clone(),
             log: Vec::new(),

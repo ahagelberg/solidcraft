@@ -232,8 +232,68 @@ impl Prefs {
 pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
+
+/// A named folder of designs in the Designs panel (a repository, like a Fusion project hub).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Repository {
+    /// Stable id the panel's active selection refers to.
+    pub id: String,
+    /// The name shown in the panel and in Preferences.
+    pub name: String,
+    /// What the folder is for (empty: none).
+    pub description: String,
+    /// The folder, absolute; empty when the platform offers no home folder to suggest.
+    pub path: String,
+}
+
+impl Repository {
+    /// The repository a new install starts with: `Documents/SolidCraft`, named after them.
+    pub fn suggested() -> Vec<Repository> {
+        vec![Repository { id: "repo-1".into(), name: user_name(), description: String::new(), path: suggested_folder() }]
+    }
+}
+
+/// The OS user name, for the first repository's name (`$USER`, `$USERNAME`, else the home folder).
+fn user_name() -> String {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    env("USER")
+        .or_else(|| env("USERNAME"))
+        .or_else(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                dirs::home_dir().and_then(|h| h.file_name().map(|n| n.to_string_lossy().into_owned()))
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        })
+        .unwrap_or_else(|| "Designs".into())
+}
+
+/// `Documents/SolidCraft`: the folder the first repository suggests. The system's Documents
+/// folder (XDG user dirs, the Windows Known Folder, `~/Documents`) and our own name inside it,
+/// falling back to the home folder when the platform has none. The folder itself is made when
+/// the panel first opens.
+fn suggested_folder() -> String {
+    // Tests and scenarios point this at a scratch folder: they must never create or list the
+    // user's real Documents folder.
+    if let Some(dir) = std::env::var_os("SOLIDCRAFT_DESIGNS_DIR").filter(|d| !d.is_empty()) {
+        return std::path::PathBuf::from(dir).to_string_lossy().into_owned();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        dirs::document_dir().or_else(dirs::home_dir).map(|p| p.join("SolidCraft").to_string_lossy().into_owned()).unwrap_or_default()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        String::new()
+    }
+}
+
 /// Stable control-channel names; presentation labels may be shorter.
-pub const PAGES: &[&str] = &["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins"];
+pub const PAGES: &[&str] = &["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Repositories", "Plugins"];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_INTERFACE: usize = 1;
 pub const PAGE_DESIGN: usize = 2;
@@ -242,7 +302,8 @@ pub const PAGE_SHORTCUTS: usize = 4;
 pub const PAGE_SKETCH: usize = 5;
 pub const PAGE_GRAPHICS: usize = 6;
 pub const PAGE_AI: usize = 7;
-pub const PAGE_PLUGINS: usize = 8;
+pub const PAGE_REPOSITORIES: usize = 8;
+pub const PAGE_PLUGINS: usize = 9;
 const WINDOW_PAGES: &[ui_kit::WindowPage<SolveApp>] = &[
     ui_kit::WindowPage { icon: "settings", label: "ui.general", group: None, handle: "prefs:page:General", scroll: true, draw: window_page::<0> },
     ui_kit::WindowPage {
@@ -295,12 +356,20 @@ const WINDOW_PAGES: &[ui_kit::WindowPage<SolveApp>] = &[
         draw: window_page::<7>,
     },
     ui_kit::WindowPage {
+        icon: "folder",
+        label: "designs.repositories",
+        group: None,
+        handle: "prefs:page:Repositories",
+        scroll: true,
+        draw: window_page::<8>,
+    },
+    ui_kit::WindowPage {
         icon: "settings_plug",
         label: "ui.plugins",
         group: None,
         handle: "prefs:page:Plugins",
         scroll: true,
-        draw: window_page::<8>,
+        draw: window_page::<9>,
     },
 ];
 
@@ -1120,6 +1189,21 @@ preference_settings! {
     agent_chat_window: Option<[f32; 4]> = None, PAGE_AI;
     /// Changes the agent may make for one message; 0 is no limit.
     agent_chat_turn_limit: u32 = crate::agent_chat::gate::DEFAULT_TURN_LIMIT, PAGE_AI;
+    /// The folders the Designs panel browses, and the id of the one shown last (empty: the first).
+    repositories: Vec<Repository> = Repository::suggested(), PAGE_REPOSITORIES;
+    /// The id of the repository shown last (empty: the first).
+    active_repository: String = String::new(), PAGE_REPOSITORIES;
+    /// Use the repositories: the panel and its app bar button, and Save As starts in the folder
+    /// the panel shows. Off, SolidCraft saves where the picker last was, as before.
+    repositories_panel: bool = true, PAGE_REPOSITORIES;
+    /// How wide the Designs panel is (dragged by its edge).
+    designs_width: f32 = 280.0, PAGE_REPOSITORIES;
+    /// Show each folder and design as a picture in the Designs panel. Off: one compact line per
+    /// row, with an icon for its kind, and no dates or version selector (a narrow browser).
+    designs_thumbnails: bool = true, PAGE_REPOSITORIES;
+    /// Browse the repository as a tree (its root and the folders opened under it) instead of one
+    /// folder at a time. Off: the panel walks into one folder at a time.
+    designs_tree: bool = false, PAGE_REPOSITORIES;
 
     // ---- Sketch / selection modifier bindings (classic defaults; alternate mapping is opt-in) ----
     /// Modifier that suppresses sketch auto-snap while drawing or dragging a sketch point.
@@ -1625,6 +1709,12 @@ fn defaults(app: &mut SolveApp, page: usize) {
             app.session.auto_project = true;
             app.ui.pick_bodies = false;
         }
+        PAGE_REPOSITORIES => {
+            app.preferences.repositories = Repository::suggested();
+            app.preferences.active_repository.clear();
+            app.preferences.repositories_panel = true;
+            app.preferences.designs_width = Prefs::default().designs_width;
+        }
         _ => {}
     }
 }
@@ -2115,6 +2205,7 @@ fn draw_page(app: &mut SolveApp, ui: &mut egui::Ui, index: usize, t: &Tokens) {
         PAGE_SHORTCUTS => crate::keymap::page(app, ui),
         PAGE_AI => crate::agent_chat::settings::page(app, ui),
         PAGE_PLUGINS => crate::plugins::page(app, ui),
+        PAGE_REPOSITORIES => crate::designs_repositories::page(app, ui),
         PAGE_GENERAL => general::show(app, ui),
         PAGE_INTERFACE => interface::interface(app, ui, t),
         PAGE_DESIGN => design::show(app, ui),
@@ -3075,6 +3166,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if !accepted::ui_scale(&new) || !accepted::look_at_speed(&new) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
     }
+    if !(crate::designs_panel::WIDTH_MIN..=crate::designs_panel::WIDTH_MAX).contains(&new.designs_width) {
+        return Err(format!("`designs_width` must be {}…{}", crate::designs_panel::WIDTH_MIN, crate::designs_panel::WIDTH_MAX));
+    }
     if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
         return Err("`display_quality` must be coarse, normal, fine or ultra".into());
     }
@@ -3083,6 +3177,32 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
+    }
+    if new.repositories.len() > 32 {
+        return Err("`repositories` must have at most 32 entries".into());
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::new();
+    for repository in &new.repositories {
+        let name = repository.name.trim();
+        if repository.id.trim().is_empty() || !ids.insert(repository.id.as_str()) {
+            return Err("every repository needs a unique, non-empty `id`".into());
+        }
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err("every repository needs a `name` of 1 to 64 characters".into());
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(format!("repository names must be unique: `{name}` appears twice"));
+        }
+        if repository.description.chars().count() > 200 {
+            return Err("a repository `description` is longer than 200 characters".into());
+        }
+        if repository.path.len() > 4096 || (!repository.path.is_empty() && !std::path::Path::new(&repository.path).is_absolute()) {
+            return Err("a repository `path` must be empty or an absolute path of at most 4096 bytes".into());
+        }
+    }
+    if !new.active_repository.is_empty() && !new.repositories.iter().any(|r| r.id == new.active_repository) {
+        return Err("`active_repository` must be the id of one of the `repositories`".into());
     }
     if new.theme != app.preferences.theme && new.theme != "system" {
         app.ui.dark = file.map_or(new.theme == "dark", |f| f.base.is_dark());
@@ -4644,6 +4764,23 @@ mod tests {
         let p = super::lenient(&json!({"hole_presets":[row]}));
         let saved = serde_json::to_value(p.hole_presets).unwrap();
         assert_eq!(saved[0]["thread_options"]["starts"], 2, "unknown thread semantics must not silently become the defaults");
+    }
+
+    /// The repositories switch: on unless it was turned off (a preference saved before it existed
+    /// still has it on), it turns off through `ui.prefs`, it is saved, and Restore Defaults on its
+    /// page puts it back.
+    #[test]
+    fn the_repositories_switch_defaults_on_and_is_saved() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert!(app.preferences.repositories_panel);
+        let out = super::set(&mut app, &json!({ "repositories_panel": false })).unwrap();
+        assert_eq!(out["repositories_panel"], json!(false));
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&app.prefs());
+        assert!(!other.preferences.repositories_panel, "the switch did not survive a save");
+        super::defaults(&mut other, super::PAGE_REPOSITORIES);
+        assert!(other.preferences.repositories_panel, "Restore Defaults left it off");
     }
 
     /// The interface font (#1290): a font that can be read, or empty for the built-in one; saved

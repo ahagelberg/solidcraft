@@ -32,6 +32,14 @@ pub mod crash_ui;
 pub mod deferred;
 pub mod delete;
 pub mod design_properties;
+pub mod designs_browse;
+pub mod designs_folder;
+pub mod designs_new_folder;
+pub mod designs_panel;
+pub mod designs_properties;
+pub mod designs_repositories;
+pub mod designs_save;
+pub mod designs_versions;
 pub mod dialog_column;
 mod dialog_descriptor;
 pub mod dialogs;
@@ -102,6 +110,7 @@ pub mod keymap;
 pub mod kicad_import_dialog;
 mod length_input;
 mod linked_source;
+pub mod local_time;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
 #[cfg(test)]
@@ -329,6 +338,7 @@ pub struct UiState {
     pub ribbon_context: Option<String>,
     pub show_browser: bool,
     pub show_timeline: bool,
+    pub show_designs: bool,
     pub show_grid: bool,
     pub show_navigation_bar: bool,
     pub perspective: bool,
@@ -366,6 +376,7 @@ impl Default for UiState {
             sketch_return_tab: None,
             show_browser: true,
             show_timeline: true,
+            show_designs: true,
             show_grid: true,
             show_navigation_bar: true,
             perspective: false,
@@ -397,6 +408,11 @@ pub struct Services {
     pub pick_file: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a folder (a repository, a destination to move a design to); `None` without one.
+    pub pick_folder: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// The host shows the Designs panel (desktop). Its repository folders are created and read
+    /// only when it is on; tests and the browser leave it off.
+    pub designs_panel: bool,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
@@ -650,6 +666,18 @@ pub struct SolveApp {
     /// The sheet metal flat pattern's own pan and zoom.
     pub flat_view: dialogs_sheet::FlatView,
     /// The start page.
+    /// The Designs panel: its listing, thumbnails and open dialogs.
+    pub designs: designs_panel::State,
+    /// The repository's own Save As window, when it is open.
+    pub save_to_repo: Option<designs_save::Dialog>,
+    /// The Move/Copy window (a folder in any repository), when it is open.
+    pub designs_pick: Option<designs_folder::Pick>,
+    /// The New Folder window, when it is open.
+    pub new_folder_dialog: Option<designs_new_folder::Dialog>,
+    /// A version question waiting for its answer (opening an old version, saving over later ones).
+    pub version_prompt: Option<designs_versions::Prompt>,
+    /// The user agreed to delete the versions after the one being saved.
+    pub save_discards_later: bool,
     pub home: home::HomeState,
     /// The 3D mouse: which device, its reading, and the calibration window.
     pub space_mouse: space_mouse::Input,
@@ -802,6 +830,12 @@ impl SolveApp {
             pending_fit: None,
             flat_view: Default::default(),
             embedded: false,
+            designs: designs_panel::State::default(),
+            save_to_repo: None,
+            designs_pick: None,
+            new_folder_dialog: None,
+            version_prompt: None,
+            save_discards_later: false,
             home: home::HomeState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
@@ -914,6 +948,7 @@ impl SolveApp {
             "dark": self.ui.dark,
             "grid": self.ui.show_grid,
             "navigation_bar": self.ui.show_navigation_bar,
+            "show_designs": self.ui.show_designs,
             "perspective": self.ui.perspective,
             "auto_ortho_faces": self.ui.auto_ortho_faces,
             "pick_bodies": self.ui.pick_bodies,
@@ -952,6 +987,9 @@ impl SolveApp {
         }
         if let Some(visible) = flag("navigation_bar") {
             self.ui.show_navigation_bar = visible;
+        }
+        if let Some(d) = flag("show_designs") {
+            self.ui.show_designs = d;
         }
         if let Some(p) = flag("perspective") {
             self.ui.perspective = p;
@@ -1304,7 +1342,15 @@ impl SolveApp {
                         // Say where it went, as an export does (#8693).
                         let saved = self.tr("ui.design_saved").replace("{path}", &p);
                         self.set_status(saved, false);
+                        designs_panel::invalidate(self, &p);
                     }
+                }
+                // A file written next to the designs (an export, a mesh) is a row now: the
+                // panel lists the formats SolidCraft imports.
+                if matches!(id, "file.export" | "file.save_mesh")
+                    && let Some(p) = v.get("path").and_then(Value::as_str)
+                {
+                    designs_panel::invalidate(self, p);
                 }
             }
             Err(e) => {
@@ -2018,7 +2064,6 @@ impl SolveApp {
     pub fn open_path_async(&mut self, path: &str) {
         file_load::begin(self, path, false);
     }
-
     /// Open `path` asynchronously with the command's options (a KiCad board's import settings).
     pub fn open_path_async_with_options(&mut self, path: &str, options: serde_json::Value) {
         let mut request = file_load::Request::new(path, file_load::Kind::Open);
@@ -2046,6 +2091,13 @@ impl SolveApp {
             self.open_path_async(path);
         }
     }
+
+    /// Open one of a design's older versions (the caller asked the user first).
+    pub fn open_version_async(&mut self, path: &str, version: u32) {
+        let mut request = file_load::Request::new(path, file_load::Kind::Open);
+        request.options.insert("version".into(), json!(version));
+        let _ = file_load::begin_request(self, request);
+    }
     pub fn insert_path_async(&mut self, path: &str) {
         file_load::begin(self, path, true);
     }
@@ -2063,9 +2115,13 @@ impl SolveApp {
         }
     }
 
-    /// A dropped CAD, mesh, drawing or point cloud (PLY, XYZ, PTS) file joins a design that has
-    /// features or point clouds; otherwise it opens.
+    /// A dropped file: a design becomes a component of the open design, a STEP, mesh, drawing
+    /// or point cloud file joins it, and anything else opens.
     pub fn drop_path(&mut self, path: &str) {
+        if solidcraft_engine::io::is_design_path(path) {
+            crate::designs_panel::drop_path(self, path);
+            return;
+        }
         let import = solidcraft_engine::io::is_step_path(path)
             || solidcraft_engine::io::is_mesh_path(path)
             || solidcraft_engine::io::is_point_cloud_path(path)
@@ -2498,13 +2554,22 @@ impl SolveApp {
         documents::prompt(self, ui.ctx());
         open_elsewhere::show(self, ui.ctx());
         network_prompt::show(self, ui.ctx());
+        designs_save::show(self, ui.ctx());
+        designs_folder::show(self, ui.ctx());
+        designs_new_folder::show(self, ui.ctx());
+        designs_versions::show(self, ui.ctx());
         update::show(self, ui.ctx());
         install::show(self, ui.ctx());
         // Settings › AI's Add agent dialog: Settings opens over Home too (#3483).
         if agent_chat::shown(self) {
             agent_chat::settings::dialog(self, ui.ctx());
         }
+        // The Designs panel is on the start page too: it is how designs and importable files
+        // are found in the first place.
+        let mut designs_shown = false;
         if self.home.open {
+            designs_panel::show(self, ui);
+            designs_shown = true;
             home::show(self, ui);
             if self.home.open {
                 // Agent detection runs in the background and is only received by `agent_chat::poll`
@@ -2518,6 +2583,11 @@ impl SolveApp {
         // The status bar first: it spans the window's width below History and the side panels.
         status_bar::show(self, ui);
         let floating = render_workspace::active(self) || ui_kit::Container::new(ui.ctx(), ui_kit::Surface::Panel).floating();
+        // Docked beside the toolbar, the Designs browser takes its column before the bar lay out
+        // the rest of the frame.
+        if !designs_shown {
+            designs_panel::show(self, ui);
+        }
         timeline::follow_view_pick(self);
         render_ui::focus_shortcut(self, ui);
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self) && !self.preferences.history_in_browser;
