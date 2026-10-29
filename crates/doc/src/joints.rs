@@ -323,6 +323,10 @@ pub struct Joint {
     /// Distance from A's frame to B's along z, and a turn about it (radians).
     #[serde(default)]
     pub offset: f64,
+    /// Where B's origin sits across A's frame: `[x, y]` along A's own x and y (the dialog's
+    /// Offset X and Y), so a joint's position can be set on all three axes.
+    #[serde(default, skip_serializing_if = "lateral_is_zero")]
+    pub lateral: [f64; 2],
     #[serde(default)]
     pub angle: f64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -705,6 +709,11 @@ fn frame(o: Vec3, z: Vec3, x: Option<Vec3>) -> Option<Mat> {
     Some([[x.x, x.y, x.z, 0.0], [y.x, y.y, y.z, 0.0], [z.x, z.y, z.z, 0.0], [o.x, o.y, o.z, 1.0]])
 }
 
+/// Whether a joint's lateral offset is nothing (it is then left out of the saved design).
+fn lateral_is_zero(l: &[f64; 2]) -> bool {
+    l[0] == 0.0 && l[1] == 0.0
+}
+
 fn rot_z(a: f64) -> Mat {
     let (s, c) = a.sin_cos();
     [[c, s, 0.0, 0.0], [-s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
@@ -1021,6 +1030,9 @@ fn flip_of(j: &Joint) -> Mat {
     // An angle relation's `angle` is its tilt (`tail`); a perpendicular one has none.
     let turn = if matches!(j.kind, JointKind::Angle | JointKind::Perpendicular) { 0.0 } else { j.angle };
     let mut m = rot_z(turn);
+    // The offset is a point in A's frame: across it (x, y) and along it (z).
+    m[3][0] = j.lateral[0];
+    m[3][1] = j.lateral[1];
     m[3][2] = j.offset;
     if !j.flip { mat_mul(&m, &[[1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]) } else { m }
 }
@@ -2324,6 +2336,7 @@ mod tests {
                 limits: vec![(id == 3).then_some((-50.0, 50.0))],
                 flip: false,
                 offset: 0.0,
+                lateral: [0.0; 2],
                 angle: 0.0,
                 suppressed: false,
                 exprs: Default::default(),

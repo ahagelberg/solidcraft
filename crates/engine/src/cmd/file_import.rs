@@ -389,6 +389,7 @@ fn add_rigid_joints(s: &mut Session, pairs: &[(u64, u64, Mat)]) -> Result<Vec<u6
                 limits: Vec::new(),
                 flip: true,
                 offset: 0.0,
+                lateral: [0.0; 2],
                 angle: 0.0,
                 suppressed: false,
                 exprs: Default::default(),

@@ -142,6 +142,9 @@ pub struct JointForm {
     pub offset: [String; 3],
     /// Per joint value: limited, minimum, maximum.
     pub limits: Vec<(bool, String, String)>,
+    /// The direction each pick came with (a point on a Ctrl-locked face: that face's normal), by
+    /// the point it was picked at, so a corner or an edge's middle still faces like the face.
+    pub dirs: std::collections::BTreeMap<[u64; 3], Vec3>,
     pub animate: bool,
     /// Animation phase, 0…1.
     pub phase: f64,
@@ -158,6 +161,7 @@ impl JointForm {
             angle: "0 deg".into(),
             offset: std::array::from_fn(|_| crate::length_input::default(doc, "0")),
             limits: Vec::new(),
+            dirs: std::collections::BTreeMap::new(),
             animate: false,
             phase: 0.0,
             hover: None,
@@ -331,6 +335,9 @@ pub fn edit_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
     // the joint keeps following its parameters.
     f.angle = j.exprs.angle.clone().unwrap_or_else(|| num(j.angle.to_degrees(), "deg"));
     f.offset[2] = j.exprs.offset.clone().unwrap_or_else(|| crate::length_input::model(&app.session.doc, j.offset));
+    // The position across the joint's frame is kept as it is now: all three axes can be edited.
+    f.offset[0] = crate::length_input::model(&app.session.doc, j.lateral[0]);
+    f.offset[1] = crate::length_input::model(&app.session.doc, j.lateral[1]);
     f.fit_limits(&app.session.doc);
     for (i, l) in f.limits.iter_mut().enumerate() {
         if let Some(Some((lo, hi))) = j.limits.get(i) {
@@ -528,15 +535,18 @@ pub fn snap_of(s: &Session, sel: &Sel) -> Option<SnapPt> {
     Some(snap)
 }
 
-/// A snap moved across its own plane by (x, y) (the joint's offset), as an explicit frame.
-fn shifted(s: &SnapPt, x: f64, y: f64) -> Value {
-    let ax = s.z.any_perp();
-    let ay = s.z.cross(ax);
-    let mut p = json!({"frame": {"origin": pt(s.at + ax * x + ay * y), "z": pt(s.z), "x": pt(ax)}});
-    if let Some(o) = s.param.get("occurrence") {
-        p["occurrence"] = o.clone();
+/// The point a pick sits at (a vertex, a point on an edge, a place on a face).
+pub(crate) fn sel_point(sel: &Sel) -> Option<Vec3> {
+    match sel {
+        Sel::Vertex { point, .. } | Sel::Edge { point, .. } | Sel::Face { point, .. } => Some(*point),
+        _ => None,
     }
-    p
+}
+
+/// The key a point is remembered by, in a joint form's `dirs` (mm, to the micron).
+pub(crate) fn dir_key(at: Vec3) -> [u64; 3] {
+    let q = |v: f64| (v * 1000.0).round() as i64 as u64;
+    [q(at.x), q(at.y), q(at.z)]
 }
 
 // ---- rows ----
@@ -579,9 +589,6 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 enter |= expr_row(ui, "Angle", &mut f.angle);
                 crate::ui_kit::section(ui, "joint_position", "Position", false, |ui| {
                     for (l, v) in ["Offset X", "Offset Y", "Offset Z"].iter().zip(f.offset.iter_mut()) {
-                        if f.editing.is_some() && *l != "Offset Z" {
-                            continue;
-                        }
                         enter |= expr_row(ui, l, v);
                     }
                 });
@@ -969,7 +976,12 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             let limits: Vec<Value> =
                 f.limits.iter().take(jk.dofs().len()).map(|(on, lo, hi)| if *on { json!([lo, hi]) } else { Value::Null }).collect();
             if let Some(id) = f.editing {
-                let mut out = cmd("joint.edit", json!({"joint": id, "type": kind, "flip": f.flip, "offset": f.offset[2], "angle": f.angle}));
+                let x = eval(&f.offset[0], ValueKind::Length)?;
+                let y = eval(&f.offset[1], ValueKind::Length)?;
+                let mut out = cmd(
+                    "joint.edit",
+                    json!({"joint": id, "type": kind, "flip": f.flip, "offset_x": x, "offset_y": y, "offset": f.offset[2], "angle": f.angle}),
+                );
                 for (i, l) in limits.iter().enumerate() {
                     let p = match l.as_array() {
                         Some(a) => json!({"joint": id, "index": i, "min": a.first(), "max": a.get(1)}),
@@ -990,16 +1002,25 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
                 }
                 return Ok(cmd("joint.as_built", p));
             }
-            let (a, b) = (snap(0, "component 1's joint origin")?, snap(1, "component 2's joint origin")?);
+            let (mut a, mut b) = (snap(0, "component 1's joint origin")?, snap(1, "component 2's joint origin")?);
+            // A point picked on a Ctrl-locked face faces like that face, corner or edge middle
+            // (a face pick already does).
+            for snap_pt in [&mut a, &mut b] {
+                if let Some(z) = f.dirs.get(&dir_key(snap_pt.at)) {
+                    snap_pt.z = *z;
+                    if snap_pt.param.get("point").is_some() {
+                        snap_pt.param["z"] = json!([z.x, z.y, z.z]);
+                    }
+                }
+            }
             if a.param.get("occurrence").is_some() && a.param.get("occurrence") == b.param.get("occurrence") {
                 return Err("the two origins are on the same component".into());
             }
             let (x, y) = (eval(&f.offset[0], ValueKind::Length)?, eval(&f.offset[1], ValueKind::Length)?);
-            let a_param = if x.abs() > 1e-12 || y.abs() > 1e-12 { shifted(&a, x, y) } else { a.param };
             // Picked origins mate by default (the engine's default: B's z opposite A's, faces
             // meet face to face, a pin goes into its hole); the dialog's Flip is the command's
             // `flip`, which turns B the other way.
-            let p = json!({"type": kind, "a": a_param, "b": b.param, "flip": f.flip, "offset": f.offset[2], "angle": f.angle, "limits": limits});
+            let p = json!({"type": kind, "a": a.param, "b": b.param, "flip": f.flip, "offset_x": x, "offset_y": y, "offset": f.offset[2], "angle": f.angle, "limits": limits});
             cmd("joint.create", p)
         }
         Asm::JointOrigin { name, .. } => {

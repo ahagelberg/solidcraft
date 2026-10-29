@@ -45,14 +45,13 @@ fn joint_from_two_snaps() {
     // The bottom face of B snaps at its centre, z down.
     let sb = snap_of(&app.session, &d.inputs[1].items[0]).unwrap();
     assert!(sb.at.dist(Vec3::new(40.0, 10.0, 0.0)) < 1e-6 && sb.z.dist(-Vec3::Z) < 1e-9, "{sb:?}");
-    // Offset X: an explicit frame 5 mm along the face.
+    // Offset X: 5 mm across the face, sent with the command; the origin stays where it was picked.
     if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
         f.offset[0] = "5 mm".into();
     }
     let p = apply_commands(&app, &d).unwrap()[0].1.clone();
-    let o = &p["a"]["frame"]["origin"];
-    let at = Vec3::new(o[0].as_f64().unwrap(), o[1].as_f64().unwrap(), o[2].as_f64().unwrap());
-    assert!((at.dist(Vec3::new(10.0, 10.0, 10.0)) - 5.0).abs() < 1e-9, "{p}");
+    assert_eq!(p["offset_x"], json!(5.0), "{p}");
+    assert!(p["a"]["face"].is_array(), "the pick is still the face itself: {p}");
     // OK makes it.
     for (id, p) in apply_commands(&app, &d).unwrap() {
         app.run(&id, p).unwrap();
@@ -1020,9 +1019,9 @@ fn inch_joint_offsets_limits_and_drive_values_keep_their_units() {
     let (_, p) = apply_commands(&app, &d).unwrap().remove(0);
     assert_eq!(p["offset"], json!("2 mm"));
     assert_eq!(p["limits"], json!([["0 in", "0.5 in"]]));
-    let origin = &p["a"]["frame"]["origin"];
-    let at = Vec3::new(origin[0].as_f64().unwrap(), origin[1].as_f64().unwrap(), origin[2].as_f64().unwrap());
-    assert!((at.dist(Vec3::new(10.0, 10.0, 10.0)) - 6.35).abs() < 1e-9);
+    // 0.25 in across the face, in millimetres, with the origin where it was picked.
+    assert_eq!(p["offset_x"], json!(6.35), "{p}");
+    assert!(p["a"]["face"].is_array(), "the pick is still the face itself: {p}");
     app.run("joint.create", p).unwrap();
     let joint = app.session.doc.assembly.joints[0].id;
     app.start("joint.drive");
@@ -1037,4 +1036,29 @@ fn inch_joint_offsets_limits_and_drive_values_keep_their_units() {
     let edit = edit_joint(&app, joint).unwrap();
     let Kind::Assembly(Asm::Joint(f)) = edit.kind else { panic!("no edit") };
     assert_eq!((f.limits[0].1.as_str(), f.limits[0].2.as_str()), ("0 in", "0.5 in"));
+}
+
+/// A point picked on a Ctrl-locked face keeps that face's direction: the vertex is the joint's
+/// point, and the joint runs perpendicular to the face through it (not along world Z, and not from
+/// the face's centre).
+#[test]
+fn a_point_picked_on_a_locked_face_keeps_the_faces_direction() {
+    let app = two_boxes();
+    let mut d = app.dialog.clone().unwrap_or_else(|| {
+        let mut a = two_boxes();
+        a.start("joint.create");
+        a.dialog.clone().expect("the Joint dialog")
+    });
+    let corner = Vec3::new(20.0, 0.0, 20.0);
+    d.pick(&app.session, Sel::Vertex { body: "A".into(), point: corner });
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    let camera_side = Vec3::new(0.0, 1.0, 0.0);
+    if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
+        f.dirs.insert(crate::dialogs_assembly::dir_key(corner), camera_side);
+    }
+    let p = apply_commands(&app, &d).unwrap().remove(0).1;
+    // The point is the corner itself…
+    assert_eq!(p["a"]["point"], json!([corner.x, corner.y, corner.z]), "{p}");
+    // …and the direction is the face's, not a default.
+    assert_eq!(p["a"]["z"], json!([camera_side.x, camera_side.y, camera_side.z]), "{p}");
 }

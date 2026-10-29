@@ -938,6 +938,7 @@ mod tests {
             flip: false,
             offset: 0.0,
             angle: 0.0,
+            lateral: [0.0, 0.0],
             suppressed: false,
             exprs: Default::default(),
         };
