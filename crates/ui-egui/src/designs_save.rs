@@ -140,11 +140,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// The name without the extension the dialog adds: `Part.solidcraft` saves as `Part`.
 fn strip_extension(name: &str) -> &str {
-    let extension = solidcraft_engine::io::DESIGN_EXT;
-    match name.len().checked_sub(extension.len() + 1) {
-        Some(cut) if name.is_char_boundary(cut) && name[cut..].eq_ignore_ascii_case(&format!(".{extension}")) => &name[..cut],
-        _ => name,
+    for extension in solidcraft_engine::io::DESIGN_EXTS {
+        if let Some(cut) = name.len().checked_sub(extension.len() + 1)
+            && name.is_char_boundary(cut)
+            && name[cut..].eq_ignore_ascii_case(&format!(".{extension}"))
+        {
+            return &name[..cut];
+        }
     }
+    name
 }
 
 /// Whether a typed name can be a file name in the folder shown: no separators, no `..`, no
@@ -197,6 +201,8 @@ mod tests {
 
     #[test]
     fn the_extension_the_dialog_adds_is_not_doubled() {
+        assert_eq!(strip_extension("part.sc"), "part");
+        assert_eq!(strip_extension("part.SC"), "part");
         assert_eq!(strip_extension("part.solidcraft"), "part");
         assert_eq!(strip_extension("part.SOLIDCRAFT"), "part");
         assert_eq!(strip_extension("part.json"), "part.json");
