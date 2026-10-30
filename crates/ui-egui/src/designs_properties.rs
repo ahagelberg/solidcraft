@@ -1,10 +1,13 @@
 //! Project Properties: a project folder's name, description and custom thumbnail.
 
-use egui::{Color32, RichText, Sense, pos2, vec2};
+use egui::{Color32, Sense, pos2, vec2};
 use serde_json::json;
 
 use crate::SolveApp;
 use crate::theme::Tokens;
+
+/// The picture's box in the dialog; the row it sits in is as tall as it.
+const THUMBNAIL: [f32; 2] = [160.0, 100.0];
 
 /// The open Properties window.
 pub struct Properties {
@@ -69,60 +72,60 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let t = Tokens::get();
     let (mut ok, mut cancel, mut choose, mut remove) = (false, false, false, false);
-    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "box", crate::i18n::tr("designs.project_properties"))
+    let ready = !properties.name.trim().is_empty();
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "box", crate::i18n::tr("designs.project_properties"))
         .cards(2.5)
-        .show(ctx, true, |ui| {
-            ui.set_min_width(420.0);
-            egui::Grid::new("sc_designs_properties_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                ui.label(crate::i18n::tr("designs.name"));
-                ui.add(egui::TextEdit::singleline(&mut properties.name).desired_width(280.0));
-                ui.end_row();
-                ui.label(crate::i18n::tr("designs.description"));
-                ui.add(egui::TextEdit::multiline(&mut properties.description).desired_rows(3).desired_width(280.0));
-                ui.end_row();
-                ui.label(crate::i18n::tr("designs.thumbnail"));
-                ui.vertical(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(vec2(160.0, 100.0), Sense::hover());
-                    match &properties.preview {
-                        Some(texture) => {
-                            ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                        }
-                        None => {
-                            ui.painter().rect_filled(rect, 4.0, t.field);
-                            ui.painter().text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                crate::i18n::tr("designs.no_thumbnail"),
-                                egui::FontId::proportional(11.0),
-                                t.text_dim,
-                            );
-                        }
+        .actions(crate::i18n::tr("designs.ok"), crate::i18n::tr("designs.cancel"), None)
+        .show(ctx, ready, |ui| {
+            // The kit's own rows: the label column is the form's, so nothing is elided and the
+            // fields fill the card.
+            let (_, enter) = crate::ui_kit::text_row(ui, crate::i18n::tr("designs.name"), &mut properties.name, "");
+            if enter {
+                ok = true;
+            }
+            crate::ui_kit::multiline_text_field(
+                ui,
+                crate::i18n::tr("designs.description"),
+                egui::Id::new("sc_designs_properties_description"),
+                &mut properties.description,
+            );
+            // The picture with its two actions beside it, at the top of the row.
+            crate::ui_kit::sized_row(ui, crate::i18n::tr("designs.thumbnail"), THUMBNAIL[1], |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(THUMBNAIL[0], THUMBNAIL[1]), Sense::hover());
+                match &properties.preview {
+                    Some(texture) => {
+                        ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                     }
-                    ui.horizontal(|ui| {
-                        if ui.button(crate::i18n::tr("designs.choose_image")).clicked() {
-                            choose = true;
-                        }
-                        if ui.button(crate::i18n::tr("designs.remove_image")).clicked() {
-                            remove = true;
-                        }
-                    });
+                    None => {
+                        ui.painter().rect_filled(rect, 4.0, t.field);
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            crate::i18n::tr("designs.no_thumbnail"),
+                            egui::FontId::proportional(11.0),
+                            t.text_dim,
+                        );
+                    }
+                }
+                ui.add_space(t.space_8);
+                ui.vertical(|ui| {
+                    if crate::ui_kit::button(ui, crate::i18n::tr("designs.choose_image"), crate::ui_kit::Button::Normal).clicked() {
+                        choose = true;
+                    }
+                    if crate::ui_kit::button(ui, crate::i18n::tr("designs.remove_image"), crate::ui_kit::Button::Normal).clicked() {
+                        remove = true;
+                    }
                 });
-                ui.end_row();
             });
             if let Some(error) = &properties.error {
-                ui.add_space(4.0);
-                ui.label(RichText::new(error).color(t.error).size(11.5));
+                crate::ui_kit::status_line(ui, error, crate::ui_kit::StatusTone::Error);
             }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.button(crate::i18n::tr("designs.ok")).clicked() {
-                    ok = true;
-                }
-                if ui.button(crate::i18n::tr("designs.cancel")).clicked() {
-                    cancel = true;
-                }
-            });
         });
+    match action {
+        crate::ui_kit::Action::Ok => ok = true,
+        crate::ui_kit::Action::Cancel => cancel = true,
+        crate::ui_kit::Action::Apply | crate::ui_kit::Action::None => {}
+    }
     let open = !closed;
     if choose {
         app.pick_open_for(&["png", "jpg", "jpeg", "webp"], |app, path| {

@@ -495,11 +495,11 @@ fn a_row_renames_and_deletes_its_design() {
         { "until": { "count": { "name": "designs:folders", "value": 1 } } },
         { "click": { "handle": "designs:row:empty" }, "button": "right" },
         { "widget": "Delete" },
-        { "key": "Space" },
+        { "key": "Enter" },
         { "until": { "count": { "name": "designs:folders", "value": 0 } } }
     ]))
     .unwrap();
-    assert!(!h.dir.join("empty").exists(), "Space did not activate the focused Delete button");
+    assert!(!h.dir.join("empty").exists(), "Enter did not answer the delete card");
 }
 
 #[test]
@@ -527,14 +527,14 @@ fn a_version_is_promoted_to_latest_or_the_older_ones_purged_from_its_menu() {
         h.app.version_prompt
     );
     // Cancelling changes nothing.
-    h.run(&json!([{ "click": { "handle": "designs:version_cancel" } }])).unwrap();
+    h.run(&json!([{ "click": { "handle": "dialog:cancel" } }])).unwrap();
     assert_eq!(solidcraft_ui_egui::scenario::count_of("designs:version:plate"), Some(3.0), "cancel changed the file");
     // Agreeing drops version 3 and lists the file again: two versions are left.
     h.run(&json!([
         { "click": { "handle": "designs:versions:plate" } },
         { "widget": "Version 2", "button": "right" },
         { "widget": "Promote to Latest" },
-        { "click": { "handle": "designs:version_go" } },
+        { "click": { "handle": "dialog:ok" } },
         { "until": { "count": { "name": "designs:version:plate", "value": 2.0 } } }
     ]))
     .unwrap();
@@ -545,7 +545,7 @@ fn a_version_is_promoted_to_latest_or_the_older_ones_purged_from_its_menu() {
         { "click": { "handle": "designs:versions:plate" } },
         { "widget": "Version 2", "button": "right" },
         { "widget": "Purge Older Versions" },
-        { "click": { "handle": "designs:version_go" } },
+        { "click": { "handle": "dialog:ok" } },
         { "until": { "count": { "name": "designs:version:plate", "value": 1.0 } } }
     ]))
     .unwrap();

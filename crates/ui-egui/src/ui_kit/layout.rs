@@ -235,8 +235,9 @@ pub(crate) fn choice_row(ui: &mut Ui, label: &str, id: &str, selected: &mut usiz
     row(ui, label, |ui| super::dropdown(ui, id, selected, options))
 }
 
-/// Internal form geometry for controls which need several lines (e.g. text areas).
-pub(super) fn sized_row<R>(ui: &mut Ui, text: &str, height: f32, control: impl FnOnce(&mut Ui) -> R) -> R {
+/// Internal form geometry for controls which need several lines (e.g. text areas), or a row
+/// taller than one control line (a picture beside its actions).
+pub(crate) fn sized_row<R>(ui: &mut Ui, text: &str, height: f32, control: impl FnOnce(&mut Ui) -> R) -> R {
     let mut passthrough = false;
     if crate::prefs_search::querying(ui) {
         // A row with no label has no words to match; its controls supply them (#9265).
