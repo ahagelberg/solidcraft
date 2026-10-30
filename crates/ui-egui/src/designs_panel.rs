@@ -1406,38 +1406,34 @@ fn apply(app: &mut SolveApp, action: Action) {
 
 fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(confirm) = app.designs.confirm.clone() else { return };
-    let mut answer = None;
-    let _ = crate::ui_kit::Window::new(egui::Id::new("sc_designs_delete"), "delete", crate::i18n::tr("Delete")).cards(2.0).show(ctx, true, |ui| {
-        ui.set_max_width(360.0);
-        let text = if confirm.folder {
-            crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
-        } else {
-            crate::i18n::format("designs.delete_confirm", &[("name", &confirm.name)])
-        };
-        ui.label(text);
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            let delete = ui.button(crate::i18n::tr("designs.delete"));
-            if confirm.focus_delete {
-                delete.request_focus();
-            }
-            crate::scenario::publish_handle("designs:confirm:delete", delete.rect.center());
-            if delete.clicked() {
-                answer = Some(true);
-            }
-            let cancel = ui.button(crate::i18n::tr("designs.cancel"));
-            crate::scenario::publish_handle("designs:confirm:cancel", cancel.rect.center());
-            if cancel.clicked() {
-                answer = Some(false);
-            }
-        });
+    let text = if confirm.folder {
+        crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
+    } else {
+        crate::i18n::format("designs.delete_confirm", &[("name", &confirm.name)])
+    };
+    // Delete is the marked answer when the menu asked for the card, and Enter answers the card:
+    // the design is only gone once the card is answered.
+    let mut card = crate::ui_kit::Confirm::new(egui::Id::new("sc_designs_delete"), "delete", crate::i18n::tr("Delete"))
+        .tone(crate::ui_kit::Tone::Danger)
+        .actions(crate::i18n::tr("designs.delete"), crate::i18n::tr("designs.cancel"), None);
+    if confirm.focus_delete {
+        card = card.selected(crate::ui_kit::Action::Ok);
+    }
+    let (closed, action) = card.show(ctx, true, |ui| {
+        crate::ui_kit::text(ui, &text, crate::ui_kit::Text::Report("designs_delete", false));
     });
     if let Some(confirm) = app.designs.confirm.as_mut() {
         confirm.focus_delete = false;
     }
-    if let Some(accept) = answer {
+    let answer = match action {
+        crate::ui_kit::Action::Ok => Some(true),
+        crate::ui_kit::Action::Cancel => Some(false),
+        crate::ui_kit::Action::Apply | crate::ui_kit::Action::None => None,
+    };
+    // Closed by the card's × is the same as Cancel: nothing is deleted.
+    if answer.is_some() || closed {
         app.designs.confirm = None;
-        if accept {
+        if answer == Some(true) {
             match app.run("designs.delete", json!({ "path": confirm.path })) {
                 Ok(_) => {
                     app.designs.entries = None;

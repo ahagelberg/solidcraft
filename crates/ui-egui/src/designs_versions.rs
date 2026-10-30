@@ -4,11 +4,9 @@
 //! The questions are asked before anything happens, so a version that is not the current one is
 //! never opened or replaced by accident.
 
-use egui::RichText;
 use serde_json::json;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
 
 /// A question waiting for its answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,7 +65,6 @@ fn rewrite(app: &mut SolveApp, command: &str, path: &str, version: u32) {
 /// The window. Called once per frame while a question is open.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(prompt) = app.version_prompt.clone() else { return };
-    let t = Tokens::get();
     let (title, text, go) = match &prompt {
         Prompt::Open { version, versions, .. } => (
             crate::i18n::tr("designs.open_version_title").to_string(),
@@ -107,24 +104,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             (crate::i18n::tr("designs.save_version_title").to_string(), text, crate::i18n::tr("ui.save").to_string())
         }
     };
+    // Saving a version or deleting the others loses work: the card says so in the danger tone.
+    let dangerous = matches!(prompt, Prompt::Promote { .. } | Prompt::PurgeOlder { .. });
     let mut answer = None;
-    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_versions"), "box", &title).cards(2.0).show(ctx, true, |ui| {
-        ui.set_max_width(380.0);
-        ui.label(RichText::new(text).size(12.0).color(t.text));
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let go_button = ui.button(go.as_str());
-            crate::scenario::publish_handle("designs:version_go", go_button.rect.center());
-            if go_button.clicked() {
-                answer = Some(true);
-            }
-            let cancel_button = ui.button(crate::i18n::tr("designs.cancel"));
-            crate::scenario::publish_handle("designs:version_cancel", cancel_button.rect.center());
-            if cancel_button.clicked() {
-                answer = Some(false);
-            }
+    let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::new("sc_designs_versions"), "box", &title)
+        .tone(if dangerous { crate::ui_kit::Tone::Danger } else { crate::ui_kit::Tone::Info })
+        .actions(&go, crate::i18n::tr("designs.cancel"), None)
+        .show(ctx, true, |ui| {
+            crate::ui_kit::text(ui, &text, crate::ui_kit::Text::Report("designs_versions", false));
         });
-    });
+
+    match action {
+        crate::ui_kit::Action::Ok => answer = Some(true),
+        crate::ui_kit::Action::Cancel => answer = Some(false),
+        crate::ui_kit::Action::Apply | crate::ui_kit::Action::None => {}
+    }
     let open = !closed;
     match answer {
         Some(true) => match prompt {
