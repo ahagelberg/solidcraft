@@ -201,12 +201,12 @@ impl Browser {
             let mut cancelled = false;
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut field).desired_width(180.0).hint_text(crate::i18n::tr("designs.name")));
-                let button = ui.button(crate::i18n::tr("designs.create"));
+                let button = crate::ui_kit::button(ui, crate::i18n::tr("designs.create"), crate::ui_kit::Button::Small);
                 crate::scenario::publish_handle("designs:browse:create", button.rect.center());
                 if button.clicked() {
                     create = true;
                 }
-                if ui.button("×").on_hover_text(crate::i18n::tr("designs.cancel")).clicked() {
+                if crate::ui_kit::button(ui, "×", crate::ui_kit::Button::Small).on_hover_text(crate::i18n::tr("designs.cancel")).clicked() {
                     cancelled = true;
                 }
             });
@@ -214,7 +214,7 @@ impl Browser {
                 self.new_folder = Some(field);
             }
         } else {
-            let button = ui.button(crate::i18n::tr("designs.new_folder"));
+            let button = crate::ui_kit::button(ui, crate::i18n::tr("designs.new_folder"), crate::ui_kit::Button::Small);
             crate::scenario::publish_handle("designs:browse:new", button.rect.center());
             if button.clicked() {
                 self.new_folder = Some(String::new());
