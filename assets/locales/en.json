@@ -1706,6 +1706,7 @@
   "designs.version": "Version {version}",
   "designs.version_current": "Version {version} (current)",
   "designs.version_gone": "The version of {name} you have open was deleted. Saving the tab makes its contents the latest version.",
+  "diagnostic.empty_boolean_component": "there is no body to cut or intersect in component '{component}'; the tool may overlap '{body}' in component '{other}' — activate that component or pick the body as a target",
   "dialog.bodies_count": "{count} bodies",
   "dialog.clearance_invalid": "the clearance must be a length of 0 or more",
   "dialog.compute": "Compute",

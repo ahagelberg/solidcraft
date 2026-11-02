@@ -1706,6 +1706,7 @@
   "designs.version": "版本 {version}",
   "designs.version_current": "版本 {version}（当前）",
   "designs.version_gone": "你打开的 {name} 版本已被删除。保存该标签页会使其内容成为最新版本。",
+  "diagnostic.empty_boolean_component": "组件 '{component}' 中没有可供切除或求交的实体；工具可能与组件 '{other}' 中的 '{body}' 重叠 — 请激活该组件或选择该实体作为目标",
   "dialog.bodies_count": "{count} 个实体",
   "dialog.clearance_invalid": "间隙必须是 0 或更大的长度",
   "dialog.compute": "计算",

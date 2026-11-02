@@ -1706,6 +1706,7 @@
   "designs.version": "バージョン {version}",
   "designs.version_current": "バージョン {version} (最新)",
   "designs.version_gone": "開いている {name} のバージョンは削除されました。タブを保存するとその内容が最新版になります。",
+  "diagnostic.empty_boolean_component": "コンポーネント '{component}' に切り取りまたは交差の対象となるボディがありません。ツールはコンポーネント '{other}' の '{body}' と重なる可能性があります。そのコンポーネントをアクティブにするか、ボディを対象として選択してください",
   "dialog.bodies_count": "{count} ボディ",
   "dialog.clearance_invalid": "クリアランスは 0 以上の長さにしてください",
   "dialog.compute": "計算",
