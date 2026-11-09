@@ -2322,10 +2322,10 @@ mod tests {
         let mut reopened = Session::default();
         let opened = reopened.execute("doc.open", &json!({"path":path_text})).unwrap();
         assert_eq!(opened["versions"], json!(2));
-        assert_eq!(reopened.world_state().bodies.len(), 1);
+        assert_eq!(reopened.world_state().unwrap().bodies.len(), 1);
         let older = reopened.execute("doc.open", &json!({"path":path_text,"version":1})).unwrap();
         assert_eq!(older["version"], json!(1));
-        assert_eq!(reopened.world_state().bodies.len(), 1);
+        assert_eq!(reopened.world_state().unwrap().bodies.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3157,7 +3157,12 @@ mod tests {
         for f in formats::FORMATS {
             if let Some(import) = &f.import {
                 for o in import.options {
-                    for id in ["doc.open", if import.target == formats::ImportTarget::Mesh { "file.insert_mesh" } else { "file.insert_step" }] {
+                    let ids: &[&str] = match import.target {
+                        formats::ImportTarget::Mesh => &["doc.open", "file.insert_mesh"],
+                        formats::ImportTarget::Kicad => &["doc.open"],
+                        _ => &["doc.open", "file.insert_step"],
+                    };
+                    for id in ids {
                         assert!(params_of(id).contains(o.param), "{}: `{}` is not a documented parameter of {id}", f.id, o.param);
                     }
                 }
