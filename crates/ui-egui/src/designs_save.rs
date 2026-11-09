@@ -11,7 +11,7 @@ use egui::RichText;
 use serde_json::json;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The open Save As window.
 pub struct Dialog {
@@ -68,10 +68,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (mut save, mut cancel) = (false, false);
     let shown = dialog.browser.folder().to_path_buf();
     let ready = dialog.target().is_some();
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_save"), "save", crate::i18n::tr("designs.save_title"))
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_save"), "save", solidcraft_ui_text::tr("designs.save_title"))
         .cards(2.5)
         .fields()
-        .actions(crate::i18n::tr("ui.save"), crate::i18n::tr("ui.cancel"), None)
+        .actions(solidcraft_ui_text::tr("ui.save"), solidcraft_ui_text::tr("ui.cancel"), None)
         .show(ctx, ready, |ui| {
             ui.set_min_width(460.0);
             // The repository, its folders and a new one if wanted: the same browser Move and
@@ -80,7 +80,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.add_space(4.0);
             let id = egui::Id::new("designs-save-name");
             ui.horizontal(|ui| {
-                ui.label(crate::i18n::tr("designs.name"));
+                ui.label(solidcraft_ui_text::tr("designs.name"));
                 let response = ui.add(egui::TextEdit::singleline(&mut dialog.name).id(id).desired_width(240.0));
                 crate::scenario::publish_handle("designs:save:name", response.rect.center());
                 if dialog.select_all {
@@ -100,7 +100,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.label(RichText::new(target.to_string_lossy()).size(10.5).color(t.text_dim));
             }
             if dialog.asks_to_replace() {
-                let text = crate::i18n::format("designs.save_exists", &[("name", &dialog.file_name())]);
+                let text = solidcraft_ui_text::format("designs.save_exists", &[("name", &dialog.file_name())]);
                 ui.label(RichText::new(text).size(11.5).color(t.warning));
             }
         });

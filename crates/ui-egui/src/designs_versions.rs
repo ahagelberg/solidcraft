@@ -53,7 +53,7 @@ fn rewrite(app: &mut SolveApp, command: &str, path: &str, version: u32) {
                     (false, std::cmp::Ordering::Less) => None,
                 });
                 if open.is_some() && app.session.version.is_none() {
-                    app.set_status(crate::i18n::format("designs.version_gone", &[("name", &app.session.doc.name)]), false);
+                    app.set_status(solidcraft_ui_text::format("designs.version_gone", &[("name", &app.session.doc.name)]), false);
                 }
             }
             app.designs.refresh_after_change(path);
@@ -67,41 +67,41 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(prompt) = app.version_prompt.clone() else { return };
     let (title, text, go) = match &prompt {
         Prompt::Open { version, versions, .. } => (
-            crate::i18n::tr("designs.open_version_title").to_string(),
-            crate::i18n::format("designs.open_version_text", &[("version", &version.to_string()), ("versions", &versions.to_string())]),
-            crate::i18n::tr("designs.open_it").to_string(),
+            solidcraft_ui_text::tr("designs.open_version_title").to_string(),
+            solidcraft_ui_text::format("designs.open_version_text", &[("version", &version.to_string()), ("versions", &versions.to_string())]),
+            solidcraft_ui_text::tr("designs.open_it").to_string(),
         ),
         Prompt::Promote { version, versions, .. } => {
             let (from, to) = (version.saturating_add(1), *versions);
             // One version going is said in the singular ("Version 3 is deleted").
             let text = if from == to {
-                crate::i18n::format("designs.promote_text_one", &[("version", &version.to_string()), ("from", &from.to_string())])
+                solidcraft_ui_text::format("designs.promote_text_one", &[("version", &version.to_string()), ("from", &from.to_string())])
             } else {
-                crate::i18n::format(
+                solidcraft_ui_text::format(
                     "designs.promote_text",
                     &[("version", &version.to_string()), ("from", &from.to_string()), ("to", &to.to_string())],
                 )
             };
-            (crate::i18n::format("designs.promote_title", &[("version", &version.to_string())]), text, crate::i18n::tr("designs.promote").to_string())
+            (solidcraft_ui_text::format("designs.promote_title", &[("version", &version.to_string())]), text, solidcraft_ui_text::tr("designs.promote").to_string())
         }
         Prompt::PurgeOlder { version, .. } => {
             let to = version.saturating_sub(1);
             // One version going is said in the singular ("Version 1 is deleted").
             let text = if to == 1 {
-                crate::i18n::format("designs.purge_text_one", &[("to", &to.to_string()), ("keep", &version.to_string())])
+                solidcraft_ui_text::format("designs.purge_text_one", &[("to", &to.to_string()), ("keep", &version.to_string())])
             } else {
-                crate::i18n::format("designs.purge_text", &[("from", "1"), ("to", &to.to_string()), ("keep", &version.to_string())])
+                solidcraft_ui_text::format("designs.purge_text", &[("from", "1"), ("to", &to.to_string()), ("keep", &version.to_string())])
             };
-            (crate::i18n::tr("designs.purge_title").to_string(), text, crate::i18n::tr("designs.delete").to_string())
+            (solidcraft_ui_text::tr("designs.purge_title").to_string(), text, solidcraft_ui_text::tr("designs.delete").to_string())
         }
         Prompt::SaveDeletesLater { version, versions } => {
             let (from, to) = (version.saturating_add(1), *versions);
             let text = if from == to {
-                crate::i18n::format("designs.save_version_text_one", &[("from", &from.to_string())])
+                solidcraft_ui_text::format("designs.save_version_text_one", &[("from", &from.to_string())])
             } else {
-                crate::i18n::format("designs.save_version_text", &[("from", &from.to_string()), ("to", &to.to_string())])
+                solidcraft_ui_text::format("designs.save_version_text", &[("from", &from.to_string()), ("to", &to.to_string())])
             };
-            (crate::i18n::tr("designs.save_version_title").to_string(), text, crate::i18n::tr("ui.save").to_string())
+            (solidcraft_ui_text::tr("designs.save_version_title").to_string(), text, solidcraft_ui_text::tr("ui.save").to_string())
         }
     };
     // Saving a version or deleting the others loses work: the card says so in the danger tone.
@@ -109,7 +109,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut answer = None;
     let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::new("sc_designs_versions"), "box", &title)
         .tone(if dangerous { crate::ui_kit::Tone::Danger } else { crate::ui_kit::Tone::Info })
-        .actions(&go, crate::i18n::tr("designs.cancel"), None)
+        .actions(&go, solidcraft_ui_text::tr("designs.cancel"), None)
         .show(ctx, true, |ui| {
             crate::ui_kit::text(ui, &text, crate::ui_kit::Text::Report("designs_versions", false));
         });

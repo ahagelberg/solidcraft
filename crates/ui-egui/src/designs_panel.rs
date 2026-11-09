@@ -14,7 +14,7 @@ use egui::{Color32, RichText, Sense, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// A design row being dragged out of the panel; the viewport or the Home page receives it.
 #[derive(Clone)]
@@ -334,7 +334,7 @@ fn open_folder_properties(app: &mut SolveApp, path: String, name: String) {
 /// refresh when the window regains focus, and start a listing when one is due.
 fn sync(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(repository) = active_repository(app) else {
-        app.designs.error = Some(crate::i18n::tr("designs.no_repositories").to_string());
+        app.designs.error = Some(solidcraft_ui_text::tr("designs.no_repositories").to_string());
         app.designs.entries = None;
         return;
     };
@@ -390,7 +390,7 @@ fn sync(app: &mut SolveApp, ctx: &egui::Context) {
         match spawned {
             Ok(_) => app.designs.root_check = Some((root.clone(), rx)),
             Err(_) => {
-                app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+                app.designs.error = Some(solidcraft_ui_text::tr("designs.list_failed").to_string());
                 app.designs.failed = Some(root);
                 app.designs.root_check = None;
                 app.designs.entries = None;
@@ -435,7 +435,7 @@ fn start_listing(app: &mut SolveApp, path: &Path, ctx: &egui::Context) {
         app.designs.entries = None;
         app.designs.thumbnails.clear();
     } else {
-        app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+        app.designs.error = Some(solidcraft_ui_text::tr("designs.list_failed").to_string());
         app.designs.failed = app.designs.listing_path.clone();
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -463,7 +463,7 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
                     app.designs.entries = None;
                 }
                 Err(()) => {
-                    app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+                    app.designs.error = Some(solidcraft_ui_text::tr("designs.list_failed").to_string());
                     app.designs.failed = Some(path);
                     app.designs.entries = None;
                 }
@@ -493,7 +493,7 @@ fn pump(app: &mut SolveApp, ctx: &egui::Context) {
         }
         Some(Err(())) => {
             app.designs.listing = None;
-            app.designs.error = Some(crate::i18n::tr("designs.list_failed").to_string());
+            app.designs.error = Some(solidcraft_ui_text::tr("designs.list_failed").to_string());
             app.designs.failed = app.designs.listing_path.clone();
         }
         None => {
@@ -604,7 +604,7 @@ pub(crate) fn decode_picture(bytes: Vec<u8>, max_w: u32, max_h: u32) -> Option<e
 
 fn repository_header(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     let active = active_repository(app).map(|r| (r.id.clone(), r.name.clone(), r.description.clone()));
-    let title = active.as_ref().map(|(_, name, _)| name.clone()).unwrap_or_else(|| crate::i18n::tr("designs.no_repositories").to_string());
+    let title = active.as_ref().map(|(_, name, _)| name.clone()).unwrap_or_else(|| solidcraft_ui_text::tr("designs.no_repositories").to_string());
     egui::ComboBox::from_id_salt("designs_repository")
         .width(ui.available_width() - 4.0)
         .selected_text(RichText::new(title).size(13.0).strong())
@@ -621,7 +621,7 @@ fn repository_header(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
             }
             ui.separator();
-            if ui.button(crate::i18n::tr("designs.manage_repositories")).clicked() {
+            if ui.button(solidcraft_ui_text::tr("designs.manage_repositories")).clicked() {
                 crate::prefs::open_at(app, crate::prefs::PAGE_REPOSITORIES);
                 ui.close();
             }
@@ -666,7 +666,7 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         let mut path = root.clone();
         for part in &relative {
-            ui.label(RichText::new(">").size(11.5).color(crate::theme::Tokens::get().text_dim));
+            ui.label(RichText::new(">").size(11.5).color(solidcraft_theme::Tokens::get().text_dim));
             path.push(part);
             if ui.link(RichText::new(part).size(11.5)).clicked() {
                 target = Some(path.clone());
@@ -677,9 +677,9 @@ fn breadcrumb(app: &mut SolveApp, ui: &mut egui::Ui) {
             if response.hovered() || response.has_focus() {
                 ui.painter().rect_filled(rect, 4.0, t.hover);
             }
-            crate::icons::paint_on(ui.painter(), rect.shrink(4.0), "settings", Some(crate::theme::is_dark()), 1.0);
+            crate::icons::paint_on(ui.painter(), rect.shrink(4.0), "settings", Some(solidcraft_theme::is_dark()), 1.0);
             crate::scenario::publish_handle("designs:folder_settings", rect.center());
-            if response.on_hover_text(crate::i18n::tr("designs.properties")).clicked() {
+            if response.on_hover_text(solidcraft_ui_text::tr("designs.properties")).clicked() {
                 open_settings = true;
             }
         }
@@ -704,10 +704,10 @@ fn navigate(app: &mut SolveApp, path: PathBuf) {
 fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // The same New Folder window a folder's own menu opens, in the folder the panel shows.
-        if ui.button(crate::i18n::tr("designs.new_folder")).clicked() {
+        if ui.button(solidcraft_ui_text::tr("designs.new_folder")).clicked() {
             open_new_folder(app);
         }
-        if ui.button(crate::i18n::tr("designs.refresh")).clicked() {
+        if ui.button(solidcraft_ui_text::tr("designs.refresh")).clicked() {
             app.designs.entries = None;
             app.designs.refresh = true;
             // Refresh means try again, even for a folder that could not be made or read.
@@ -745,9 +745,9 @@ fn view_button(ui: &mut egui::Ui, t: &Tokens, key: &str, icon: &str, tip: &str) 
     if response.hovered() || response.has_focus() {
         ui.painter().rect_filled(rect, 4.0, t.hover);
     }
-    crate::icons::paint_on(ui.painter(), rect.shrink(4.0), icon, Some(crate::theme::is_dark()), 1.0);
+    crate::icons::paint_on(ui.painter(), rect.shrink(4.0), icon, Some(solidcraft_theme::is_dark()), 1.0);
     crate::scenario::publish_handle(key, rect.center());
-    response.on_hover_text(crate::i18n::tr(tip)).clicked()
+    response.on_hover_text(solidcraft_ui_text::tr(tip)).clicked()
 }
 
 /// The New Folder window, in the folder the panel shows (the repository root with none).
@@ -783,11 +783,11 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         } else if let Some(error) = &app.designs.error {
             // The folder is not there and could not be made, or it cannot be read: say so, and
             // offer to try again instead of waiting.
-            ui.label(RichText::new(crate::i18n::tr("designs.unavailable")).size(12.5).color(t.error));
+            ui.label(RichText::new(solidcraft_ui_text::tr("designs.unavailable")).size(12.5).color(t.error));
             ui.add_space(2.0);
             ui.add(egui::Label::new(RichText::new(plain(error)).size(11.0).color(t.text_dim)).wrap());
             ui.add_space(6.0);
-            if ui.button(crate::i18n::tr("designs.retry")).clicked() {
+            if ui.button(solidcraft_ui_text::tr("designs.retry")).clicked() {
                 app.designs.failed = None;
                 app.designs.created = None;
                 app.designs.entries = None;
@@ -817,9 +817,9 @@ fn rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             {
                 design_row(app, ui, t, design, &mut actions, thumbnails);
             } else if row_count == 0 {
-                ui.label(RichText::new(crate::i18n::tr("designs.empty")).size(12.0).color(t.text_dim));
+                ui.label(RichText::new(solidcraft_ui_text::tr("designs.empty")).size(12.0).color(t.text_dim));
             } else if entries.truncated {
-                ui.label(RichText::new(crate::i18n::tr("designs.truncated")).size(11.0).color(t.text_dim));
+                ui.label(RichText::new(solidcraft_ui_text::tr("designs.truncated")).size(11.0).color(t.text_dim));
             }
         }
     });
@@ -873,11 +873,11 @@ const TREE_DEPTH_MAX: usize = 32;
 /// once; everything starts collapsed.
 fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(repository) = active_repository(app) else {
-        ui.label(RichText::new(crate::i18n::tr("designs.no_repositories")).size(12.0).color(t.text_dim));
+        ui.label(RichText::new(solidcraft_ui_text::tr("designs.no_repositories")).size(12.0).color(t.text_dim));
         return;
     };
     if repository.path.is_empty() {
-        ui.label(RichText::new(crate::i18n::tr("designs.choose_folder")).size(12.0).color(t.text_dim));
+        ui.label(RichText::new(solidcraft_ui_text::tr("designs.choose_folder")).size(12.0).color(t.text_dim));
         return;
     }
     let (root, root_name) = (repository.path.clone(), repository.name.clone());
@@ -886,7 +886,7 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         && app.designs.root_check.is_none()
         && app.designs.tree_entries.is_empty()
     {
-        ui.label(RichText::new(crate::i18n::tr("designs.unavailable")).size(12.5).color(t.error));
+        ui.label(RichText::new(solidcraft_ui_text::tr("designs.unavailable")).size(12.5).color(t.error));
         ui.label(RichText::new(plain(error)).size(11.0).color(t.text_dim));
         ui.add_space(4.0);
     }
@@ -1016,7 +1016,7 @@ fn tree_request(app: &mut SolveApp, ctx: &egui::Context) {
         Ok(_) => app.designs.tree_listing = Some((path, rx)),
         Err(_) => {
             // Nothing to retry with: the row stays shut, and the panel says why.
-            app.set_status(crate::i18n::tr("designs.list_failed"), true);
+            app.set_status(solidcraft_ui_text::tr("designs.list_failed"), true);
             app.designs.tree_entries.insert(path, Entries { path: String::new(), folders: Vec::new(), designs: Vec::new(), truncated: false });
         }
     }
@@ -1028,12 +1028,12 @@ fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, height: f32, 
     let selected = app.designs.selected.as_deref() == Some(path);
     // The flat list's rows are cards on the panel; a tree row is bare, so indentation reads.
     if !plain {
-        ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().field);
+        ui.painter().rect_filled(rect, 3.0, solidcraft_theme::Tokens::get().field);
     }
     if selected {
-        ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().accent_soft);
+        ui.painter().rect_filled(rect, 3.0, solidcraft_theme::Tokens::get().accent_soft);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, crate::theme::Tokens::get().hover);
+        ui.painter().rect_filled(rect, 3.0, solidcraft_theme::Tokens::get().hover);
     }
     if response.clicked() {
         app.designs.selected = Some(path.to_string());
@@ -1042,7 +1042,7 @@ fn row_response(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, height: f32, 
 }
 
 fn draw_picture(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect, path: &str, icon: &str) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let picture = egui::Rect::from_min_size(rect.min + vec2(4.0, 5.0), vec2(64.0, 44.0));
     match app.designs.thumbnails.get(path).and_then(Option::as_ref) {
         Some(texture) => {
@@ -1057,7 +1057,7 @@ fn draw_picture(app: &SolveApp, ui: &egui::Ui, rect: egui::Rect, path: &str, ico
 }
 
 fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str, name: &str, sub: Option<&str>) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let x = rect.left() + if sub.is_some() { 76.0 } else { 32.0 };
     let name_rect = if sub.is_some() {
         egui::Rect::from_min_size(pos2(x, rect.top() + 8.0), vec2(rect.right() - x - 6.0, 18.0))
@@ -1126,7 +1126,7 @@ fn folder_row(app: &mut SolveApp, ui: &mut egui::Ui, _t: &Tokens, folder: &Folde
     let (rect, response) = row_response(app, ui, &folder.path, height, false);
     crate::scenario::publish_handle(&format!("designs:row:{}", folder.name), rect.center());
     crate::scenario::publish_rect(&format!("designs:row:{}", folder.name), rect);
-    let sub = if folder.description.is_empty() { crate::i18n::tr("designs.folder_label").to_string() } else { folder.description.clone() };
+    let sub = if folder.description.is_empty() { solidcraft_ui_text::tr("designs.folder_label").to_string() } else { folder.description.clone() };
     if thumbnails {
         draw_picture(app, ui, rect, &folder.path, "folder");
         row_text(app, ui, rect, &folder.path, &folder.name, Some(&sub));
@@ -1198,9 +1198,9 @@ fn version_button(ui: &mut egui::Ui, row: egui::Rect, design: &DesignRow, action
             for version in (1..=versions).rev() {
                 let current = version == versions;
                 let label = if current {
-                    crate::i18n::format("designs.version_current", &[("version", &version.to_string())])
+                    solidcraft_ui_text::format("designs.version_current", &[("version", &version.to_string())])
                 } else {
-                    crate::i18n::format("designs.version", &[("version", &version.to_string())])
+                    solidcraft_ui_text::format("designs.version", &[("version", &version.to_string())])
                 };
                 let item = ui.button(label);
                 if item.clicked() {
@@ -1247,22 +1247,22 @@ fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
             crate::ui_kit::Container::popup_frame(ui.style()).show(ui, |ui| {
                 ui.set_min_width(190.0);
                 ui.label(
-                    RichText::new(crate::i18n::format("designs.version", &[("version", &menu.version.to_string())])).size(10.5).color(t.text_dim),
+                    RichText::new(solidcraft_ui_text::format("designs.version", &[("version", &menu.version.to_string())])).size(10.5).color(t.text_dim),
                 );
                 ui.add_space(2.0);
                 let width = ui.available_width();
                 let up = ui.add_enabled(
                     menu.version < menu.versions,
-                    egui::Button::new(RichText::new(crate::i18n::tr("designs.promote")).size(12.0)).min_size(vec2(width, 20.0)),
+                    egui::Button::new(RichText::new(solidcraft_ui_text::tr("designs.promote")).size(12.0)).min_size(vec2(width, 20.0)),
                 );
-                if up.on_disabled_hover_text(crate::i18n::tr("designs.promote_current")).clicked() {
+                if up.on_disabled_hover_text(solidcraft_ui_text::tr("designs.promote_current")).clicked() {
                     ask = Some(true);
                 }
                 let older = ui.add_enabled(
                     menu.version > 1,
-                    egui::Button::new(RichText::new(crate::i18n::tr("designs.purge_older")).size(12.0)).min_size(vec2(width, 20.0)),
+                    egui::Button::new(RichText::new(solidcraft_ui_text::tr("designs.purge_older")).size(12.0)).min_size(vec2(width, 20.0)),
                 );
-                if older.on_disabled_hover_text(crate::i18n::tr("designs.purge_first")).clicked() {
+                if older.on_disabled_hover_text(solidcraft_ui_text::tr("designs.purge_first")).clicked() {
                     ask = Some(false);
                 }
             });
@@ -1286,69 +1286,69 @@ fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 fn folder_menu(_app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, actions: &mut Vec<Action>) {
-    if ui.button(crate::i18n::tr("designs.new_folder_inside")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.new_folder_inside")).clicked() {
         actions.push(Action::NewFolder(path.to_string()));
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.open")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.open")).clicked() {
         actions.push(Action::Open(path.to_string()));
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.rename")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.rename")).clicked() {
         actions.push(Action::Rename { path: path.to_string(), name: name.to_string() });
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.move")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.move")).clicked() {
         actions.push(Action::Move(path.to_string()));
         ui.close();
     }
-    let delete = ui.button(crate::i18n::tr("designs.delete"));
-    if delete.on_hover_text(crate::i18n::tr("designs.folder_delete_hint")).clicked() {
+    let delete = ui.button(solidcraft_ui_text::tr("designs.delete"));
+    if delete.on_hover_text(solidcraft_ui_text::tr("designs.folder_delete_hint")).clicked() {
         actions.push(Action::Delete { path: path.to_string(), name: name.to_string(), folder: true });
         ui.close();
     }
     ui.separator();
-    if ui.button(crate::i18n::tr("designs.properties")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.properties")).clicked() {
         actions.push(Action::Properties { path: path.to_string(), name: name.to_string() });
         ui.close();
     }
 }
 
 fn design_menu(app: &mut SolveApp, ui: &mut egui::Ui, path: &str, name: &str, actions: &mut Vec<Action>) {
-    if ui.button(crate::i18n::tr("designs.open")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.open")).clicked() {
         actions.push(Action::Open(path.to_string()));
         ui.close();
     }
     let can_insert = !app.home.open;
-    let insert = ui.add_enabled(can_insert, egui::Button::new(crate::i18n::tr("designs.insert")));
-    if insert.on_disabled_hover_text(crate::i18n::tr("designs.needs_design")).clicked() {
+    let insert = ui.add_enabled(can_insert, egui::Button::new(solidcraft_ui_text::tr("designs.insert")));
+    if insert.on_disabled_hover_text(solidcraft_ui_text::tr("designs.needs_design")).clicked() {
         actions.push(Action::Insert(path.to_string()));
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.rename")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.rename")).clicked() {
         actions.push(Action::Rename { path: path.to_string(), name: name.to_string() });
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.duplicate")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.duplicate")).clicked() {
         actions.push(Action::Duplicate(path.to_string()));
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.move")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.move")).clicked() {
         actions.push(Action::Move(path.to_string()));
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.copy_to")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.copy_to")).clicked() {
         actions.push(Action::CopyTo(path.to_string()));
         ui.close();
     }
     let open = app.docs.is_open(app, path);
-    let delete = ui.add_enabled(!open, egui::Button::new(crate::i18n::tr("designs.delete")));
-    let delete = if open { delete.on_disabled_hover_text(crate::i18n::tr("designs.delete_open")) } else { delete };
+    let delete = ui.add_enabled(!open, egui::Button::new(solidcraft_ui_text::tr("designs.delete")));
+    let delete = if open { delete.on_disabled_hover_text(solidcraft_ui_text::tr("designs.delete_open")) } else { delete };
     if delete.clicked() {
         actions.push(Action::Delete { path: path.to_string(), name: name.to_string(), folder: false });
         ui.close();
     }
-    if ui.button(crate::i18n::tr("designs.show_in_folder")).clicked() {
+    if ui.button(solidcraft_ui_text::tr("designs.show_in_folder")).clicked() {
         if let Some(show) = &app.services.show_in_folder {
             show(path);
         }
@@ -1407,15 +1407,15 @@ fn apply(app: &mut SolveApp, action: Action) {
 fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(confirm) = app.designs.confirm.clone() else { return };
     let text = if confirm.folder {
-        crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
+        solidcraft_ui_text::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
     } else {
-        crate::i18n::format("designs.delete_confirm", &[("name", &confirm.name)])
+        solidcraft_ui_text::format("designs.delete_confirm", &[("name", &confirm.name)])
     };
     // Delete is the marked answer when the menu asked for the card, and Enter answers the card:
     // the design is only gone once the card is answered.
-    let mut card = crate::ui_kit::Confirm::new(egui::Id::new("sc_designs_delete"), "delete", crate::i18n::tr("Delete"))
+    let mut card = crate::ui_kit::Confirm::new(egui::Id::new("sc_designs_delete"), "delete", solidcraft_ui_text::tr("Delete"))
         .tone(crate::ui_kit::Tone::Danger)
-        .actions(crate::i18n::tr("designs.delete"), crate::i18n::tr("designs.cancel"), None);
+        .actions(solidcraft_ui_text::tr("designs.delete"), solidcraft_ui_text::tr("designs.cancel"), None);
     if confirm.focus_delete {
         card = card.selected(crate::ui_kit::Action::Ok);
     }
@@ -1453,7 +1453,7 @@ pub fn app_bar_button(app: &mut SolveApp, ui: &mut egui::Ui, bar: egui::Rect, x:
     crate::scenario::publish_handle("appbar:designs", rect.center());
     crate::scenario::publish_rect("appbar:designs", rect);
     if idle && response.hovered() {
-        ui.painter().rect_filled(rect, 4.0, crate::theme::Tokens::get().hover);
+        ui.painter().rect_filled(rect, 4.0, solidcraft_theme::Tokens::get().hover);
     }
     let opacity = if !idle {
         0.35
@@ -1463,7 +1463,7 @@ pub fn app_bar_button(app: &mut SolveApp, ui: &mut egui::Ui, bar: egui::Rect, x:
         0.7
     };
     crate::icons::paint_on(ui.painter(), rect.shrink(5.0), "grid", Some(true), opacity);
-    idle && response.on_hover_text(crate::i18n::tr("designs.title")).clicked()
+    idle && response.on_hover_text(solidcraft_ui_text::tr("designs.title")).clicked()
 }
 
 /// The active repository's name, for the save dialog's breadcrumb.
@@ -1497,7 +1497,7 @@ pub fn drop_path(app: &mut SolveApp, path: &str) {
         return;
     }
     if Path::new(path).is_dir() {
-        app.set_status(crate::i18n::tr("designs.drop_folder").to_string(), true);
+        app.set_status(solidcraft_ui_text::tr("designs.drop_folder").to_string(), true);
         return;
     }
     insert_design(app, path);
@@ -1509,12 +1509,12 @@ fn insert_design(app: &mut SolveApp, path: &str) {
         return;
     }
     if Path::new(path).is_dir() {
-        app.set_status(crate::i18n::tr("designs.drop_folder").to_string(), true);
+        app.set_status(solidcraft_ui_text::tr("designs.drop_folder").to_string(), true);
         return;
     }
     if solidcraft_engine::io::is_design_path(path) {
         if same_path(app.session.path.as_deref(), path) {
-            app.set_status(crate::i18n::tr("designs.insert_self").to_string(), true);
+            app.set_status(solidcraft_ui_text::tr("designs.insert_self").to_string(), true);
             return;
         }
         match app.run("component.insert_design", json!({ "path": path })) {
@@ -1524,7 +1524,7 @@ fn insert_design(app: &mut SolveApp, path: &str) {
     } else if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) {
         app.insert_path_async(path);
     } else {
-        app.set_status(crate::i18n::tr("designs.drop_unknown").to_string(), true);
+        app.set_status(solidcraft_ui_text::tr("designs.drop_unknown").to_string(), true);
     }
 }
 
@@ -1560,7 +1560,7 @@ fn drag_chip(app: &SolveApp, ctx: &egui::Context) {
         return;
     }
     let t = Tokens::get();
-    let text = crate::i18n::format("designs.drop_insert", &[("name", &payload.name)]);
+    let text = solidcraft_ui_text::format("designs.drop_insert", &[("name", &payload.name)]);
     let galley = ctx.fonts_mut(|f| f.layout_no_wrap(text, egui::FontId::proportional(12.0), t.text));
     let rect = egui::Rect::from_min_size(at + vec2(16.0, 12.0), galley.size() + vec2(14.0, 8.0));
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("designs-drag-chip")));

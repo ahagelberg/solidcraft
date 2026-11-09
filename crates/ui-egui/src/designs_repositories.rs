@@ -4,7 +4,7 @@ use egui::{RichText, vec2};
 
 use crate::SolveApp;
 use crate::prefs::Repository;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The page. Edits go straight into `app.preferences`, so Cancel and Restore Defaults work like
 /// every other page (the dialog snapshots the whole `Prefs`).

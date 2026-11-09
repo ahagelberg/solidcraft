@@ -12,7 +12,7 @@ use egui::{RichText, vec2};
 use serde_json::json;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The subfolders a dialog lists; a repository folder with more than this shows nothing (no one
 /// picks from thousands).
@@ -138,7 +138,7 @@ impl Browser {
         // The repository, then its folders down to the one shown: every link is a repository
         // folder, so nothing outside one can be reached.
         ui.horizontal(|ui| {
-            ui.label(RichText::new(crate::i18n::tr("designs.repository")).size(12.0).color(t.text_dim));
+            ui.label(RichText::new(solidcraft_ui_text::tr("designs.repository")).size(12.0).color(t.text_dim));
             let combo = egui::ComboBox::from_id_salt("designs_browse_repository")
                 .width(ui.available_width() - 4.0)
                 .selected_text(RichText::new(self.root_name.clone()).size(12.5).strong())
@@ -191,7 +191,7 @@ impl Browser {
                     }
                 }
                 if shown == 0 {
-                    let text = if self.listing.is_some() { "…" } else { crate::i18n::tr("designs.no_folders") };
+                    let text = if self.listing.is_some() { "…" } else { solidcraft_ui_text::tr("designs.no_folders") };
                     ui.label(RichText::new(text).size(11.0).color(t.text_dim));
                 }
             });
@@ -200,13 +200,13 @@ impl Browser {
         if let Some(mut field) = self.new_folder.take() {
             let mut cancelled = false;
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut field).desired_width(180.0).hint_text(crate::i18n::tr("designs.name")));
-                let button = crate::ui_kit::button(ui, crate::i18n::tr("designs.create"), crate::ui_kit::Button::Small);
+                ui.add(egui::TextEdit::singleline(&mut field).desired_width(180.0).hint_text(solidcraft_ui_text::tr("designs.name")));
+                let button = crate::ui_kit::button(ui, solidcraft_ui_text::tr("designs.create"), crate::ui_kit::Button::Small);
                 crate::scenario::publish_handle("designs:browse:create", button.rect.center());
                 if button.clicked() {
                     create = true;
                 }
-                if crate::ui_kit::button(ui, "×", crate::ui_kit::Button::Small).on_hover_text(crate::i18n::tr("designs.cancel")).clicked() {
+                if crate::ui_kit::button(ui, "×", crate::ui_kit::Button::Small).on_hover_text(solidcraft_ui_text::tr("designs.cancel")).clicked() {
                     cancelled = true;
                 }
             });
@@ -214,7 +214,7 @@ impl Browser {
                 self.new_folder = Some(field);
             }
         } else {
-            let button = crate::ui_kit::button(ui, crate::i18n::tr("designs.new_folder"), crate::ui_kit::Button::Small);
+            let button = crate::ui_kit::button(ui, solidcraft_ui_text::tr("designs.new_folder"), crate::ui_kit::Button::Small);
             crate::scenario::publish_handle("designs:browse:new", button.rect.center());
             if button.clicked() {
                 self.new_folder = Some(String::new());

@@ -4,7 +4,7 @@ use egui::{Color32, Sense, pos2, vec2};
 use serde_json::json;
 
 use crate::SolveApp;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The picture's box in the dialog; the row it sits in is as tall as it.
 const THUMBNAIL: [f32; 2] = [160.0, 100.0];
@@ -73,24 +73,24 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (mut ok, mut cancel, mut choose, mut remove) = (false, false, false, false);
     let ready = !properties.name.trim().is_empty();
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "box", crate::i18n::tr("designs.project_properties"))
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "box", solidcraft_ui_text::tr("designs.project_properties"))
         .cards(2.5)
-        .actions(crate::i18n::tr("designs.ok"), crate::i18n::tr("designs.cancel"), None)
+        .actions(solidcraft_ui_text::tr("designs.ok"), solidcraft_ui_text::tr("designs.cancel"), None)
         .show(ctx, ready, |ui| {
             // The kit's own rows: the label column is the form's, so nothing is elided and the
             // fields fill the card.
-            let (_, enter) = crate::ui_kit::text_row(ui, crate::i18n::tr("designs.name"), &mut properties.name, "");
+            let (_, enter) = crate::ui_kit::text_row(ui, solidcraft_ui_text::tr("designs.name"), &mut properties.name, "");
             if enter {
                 ok = true;
             }
             crate::ui_kit::multiline_text_field(
                 ui,
-                crate::i18n::tr("designs.description"),
+                solidcraft_ui_text::tr("designs.description"),
                 egui::Id::new("sc_designs_properties_description"),
                 &mut properties.description,
             );
             // The picture with its two actions beside it, at the top of the row.
-            crate::ui_kit::sized_row(ui, crate::i18n::tr("designs.thumbnail"), THUMBNAIL[1], |ui| {
+            crate::ui_kit::sized_row(ui, solidcraft_ui_text::tr("designs.thumbnail"), THUMBNAIL[1], |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(THUMBNAIL[0], THUMBNAIL[1]), Sense::hover());
                 match &properties.preview {
                     Some(texture) => {
@@ -101,7 +101,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.painter().text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            crate::i18n::tr("designs.no_thumbnail"),
+                            solidcraft_ui_text::tr("designs.no_thumbnail"),
                             egui::FontId::proportional(11.0),
                             t.text_dim,
                         );
@@ -109,10 +109,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 ui.add_space(t.space_8);
                 ui.vertical(|ui| {
-                    if crate::ui_kit::button(ui, crate::i18n::tr("designs.choose_image"), crate::ui_kit::Button::Normal).clicked() {
+                    if crate::ui_kit::button(ui, solidcraft_ui_text::tr("designs.choose_image"), crate::ui_kit::Button::Normal).clicked() {
                         choose = true;
                     }
-                    if crate::ui_kit::button(ui, crate::i18n::tr("designs.remove_image"), crate::ui_kit::Button::Normal).clicked() {
+                    if crate::ui_kit::button(ui, solidcraft_ui_text::tr("designs.remove_image"), crate::ui_kit::Button::Normal).clicked() {
                         remove = true;
                     }
                 });

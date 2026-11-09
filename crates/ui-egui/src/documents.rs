@@ -6,14 +6,14 @@
 //! per design with unsaved changes ([`request_quit`]).
 
 use crate::i18n::LocaleNames as _;
-use egui::{FontId, Rect, Sense, pos2, vec2};
+use egui::Rect;
 use serde_json::{Value, json};
-use std::path::Path;
 use solidcraft_engine::Session;
 use solidcraft_engine::render::Camera;
+use std::path::Path;
 
 use crate::SolveApp;
-use crate::ui_kit::{self, Container, Surface};
+use crate::ui_kit;
 
 /// Continue transient shot queues without adopting their document or view into the active tab.
 pub(crate) fn advance_render_batches(app: &mut SolveApp, ctx: &egui::Context) {

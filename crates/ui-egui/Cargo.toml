@@ -53,6 +53,7 @@ sys-locale = "0.3"
 # Pictures pasted into the agent chat; already in the tree, with the same features, through
 # egui-winit's clipboard.
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+lopdf = { version = "0.45", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 # Ends an agent's process group with the system call (MIT; already in the tree through zip).
@@ -75,12 +76,6 @@ syn = { workspace = true, features = ["visit"] }
 # The catalog guard reads every UI source file as Rust tokens; already in the tree through
 # crates/derive and the workspace lockfile.
 proc-macro2 = { workspace = true }
-
-# Pictures pasted into the agent chat; already in the tree, with the same features, through
-# egui-winit's clipboard.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-arboard = { version = "3.6", default-features = false, features = ["image-data"] }
-lopdf = { version = "0.45", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The offscreen viewport render test opens a device without a window.

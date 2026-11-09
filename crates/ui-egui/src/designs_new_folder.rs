@@ -32,18 +32,18 @@ pub fn open(app: &mut SolveApp, folder: &str) {
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.new_folder_dialog.take() else { return };
     let (mut create, mut cancel) = (false, false);
-    let title = crate::i18n::format("designs.new_folder_in", &[("name", &dialog.folder_name)]);
+    let title = solidcraft_ui_text::format("designs.new_folder_in", &[("name", &dialog.folder_name)]);
     let ready = !dialog.name.trim().is_empty();
     let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_new_folder"), "folder", &title)
         .cards(2.0)
-        .actions(crate::i18n::tr("designs.create"), crate::i18n::tr("designs.cancel"), None)
+        .actions(solidcraft_ui_text::tr("designs.create"), solidcraft_ui_text::tr("designs.cancel"), None)
         .show(ctx, ready, |ui| {
             let id = egui::Id::new("designs-new-folder-name");
             let response = ui.add(
                 egui::TextEdit::singleline(&mut dialog.name)
                     .id(id)
                     .desired_width(f32::INFINITY)
-                    .hint_text(crate::i18n::tr("designs.name")),
+                    .hint_text(solidcraft_ui_text::tr("designs.name")),
             );
             crate::scenario::publish_handle("designs:new_folder:name", response.rect.center());
             if dialog.focus {

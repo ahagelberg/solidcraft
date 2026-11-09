@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::SolveApp;
 use crate::designs_browse::Browser;
-use crate::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// An open Move or Copy window.
 pub struct Pick {
@@ -29,7 +29,7 @@ pub fn open(app: &mut SolveApp, path: &str, copy: bool) {
     // The repository holding the file comes first: a copy stays where the design lives unless
     // the user says otherwise.
     let Some(browser) = Browser::new(app, source.parent()) else {
-        app.set_status(crate::i18n::tr("designs.no_repositories"), true);
+        app.set_status(solidcraft_ui_text::tr("designs.no_repositories"), true);
         return;
     };
     let source_name = source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -43,20 +43,20 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (mut go, mut cancel) = (false, false);
     let title = if pick.copy {
-        crate::i18n::format("designs.copy_title", &[("name", &pick.source_name)])
+        solidcraft_ui_text::format("designs.copy_title", &[("name", &pick.source_name)])
     } else {
-        crate::i18n::format("designs.move_title", &[("name", &pick.source_name)])
+        solidcraft_ui_text::format("designs.move_title", &[("name", &pick.source_name)])
     };
     let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_folder"), "folder", &title)
         .cards(2.5)
         .actions(
-            if pick.copy { crate::i18n::tr("designs.copy_here") } else { crate::i18n::tr("designs.move_here") },
-            crate::i18n::tr("designs.cancel"),
+            if pick.copy { solidcraft_ui_text::tr("designs.copy_here") } else { solidcraft_ui_text::tr("designs.move_here") },
+            solidcraft_ui_text::tr("designs.cancel"),
             None,
         )
         .show(ctx, true, |ui| {
             ui.set_min_width(460.0);
-            ui.label(RichText::new(crate::i18n::tr("designs.folder_pick_note")).size(11.0).color(t.text_dim));
+            ui.label(RichText::new(solidcraft_ui_text::tr("designs.folder_pick_note")).size(11.0).color(t.text_dim));
             ui.add_space(4.0);
             // The same repositories and folders Save As offers, so the three windows match.
             pick.browser.show(app, ui);
@@ -75,12 +75,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 match (v.get("old_path").and_then(|p| p.as_str()), v.get("path").and_then(|p| p.as_str())) {
                     (Some(_), Some(new)) if pick.copy => {
                         app.designs.selected = Some(new.to_string());
-                        app.set_status(crate::i18n::format("designs.copied", &[("name", &pick.source_name)]), false);
+                        app.set_status(solidcraft_ui_text::format("designs.copied", &[("name", &pick.source_name)]), false);
                         cancel = true;
                     }
                     (Some(old), Some(new)) => {
                         crate::documents::retarget(app, old, new);
-                        app.set_status(crate::i18n::tr("designs.links_warning"), false);
+                        app.set_status(solidcraft_ui_text::tr("designs.links_warning"), false);
                         cancel = true;
                     }
                     _ => {}
