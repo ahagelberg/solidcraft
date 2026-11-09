@@ -6,7 +6,8 @@
 //! corner within a few pixels.
 
 use egui::Pos2;
-use solidcraft_engine::geom::Vec3;
+use solidcore_record::Vec3;
+use solidcraft_engine::geom::prelude::*;
 
 use crate::viewport::{Hit, Proj};
 
@@ -59,7 +60,7 @@ impl Lock {
         match self.chosen.and_then(|i| self.points.get(i)) {
             Some(p) => match p.kind {
                 Kind::Corner => Hit::Vertex { body: self.body.clone(), point: p.at },
-                Kind::EdgeMid => Hit::Edge { body: self.body.clone(), index: p.edge, mid: p.at },
+                Kind::EdgeMid => Hit::Edge { body: self.body.clone(), index: p.edge, mid: p.at, point: p.at },
                 Kind::Centre => Hit::Face { body: self.body.clone(), index: self.face, point: p.at },
             },
             None => Hit::Face { body: self.body.clone(), index: self.face, point: at },

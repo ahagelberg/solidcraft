@@ -1613,6 +1613,7 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             // Picked origins mate by default (the engine's default: B's z opposite A's, faces
             // meet face to face, a pin goes into its hole); the dialog's Flip is the command's
             // `flip`, which turns B the other way.
+            let a_param = if x.abs() > 1e-12 || y.abs() > 1e-12 { shifted(&a, x, y) } else { a.param };
             let mut p = json!({"type": kind, "a": a_param, "b": b.param, "flip": f.flip, "offset_x": x, "offset_y": y, "offset": f.offset[2], "angle": f.angle, "limits": limits});
             if !custom_name.is_empty() {
                 p["name"] = json!(custom_name);

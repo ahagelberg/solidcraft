@@ -3032,13 +3032,8 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             bestv.offer(dd, Hit::Vertex { body: String::new(), point: Vec3::ZERO });
         }
     }
-    // Corners and edges compete on screen distance: a pointer slightly along an edge takes the
-    // edge even at its end, while the corner itself takes the vertex (as Fusion does). A tie goes
-    // to the corner, which is offered first.
-    let mut corners: Vec<(f32, Hit)> = bestv.sorted();
-    corners.extend(beste.sorted());
-    corners.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    hits.extend(corners.into_iter().map(|x| x.1));
+    hits.extend(bestv.hits());
+    hits.extend(beste.hits());
     // Origin axes.
     let size = origin_size(app.cam.half_height());
     let mut besta = Near::new(all);

@@ -34,11 +34,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (mut create, mut cancel) = (false, false);
     let title = solidcraft_ui_text::format("designs.new_folder_in", &[("name", &dialog.folder_name)]);
     let ready = !dialog.name.trim().is_empty();
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_new_folder"), "folder", &title)
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_new_folder"), "folder", &title)
         .cards(2.0)
         .actions(solidcraft_ui_text::tr("designs.create"), solidcraft_ui_text::tr("designs.cancel"), None)
         .show(ctx, ready, |ui| {
-            let id = egui::Id::new("designs-new-folder-name");
+            let id = egui::Id::unique("designs-new-folder-name");
             let response = ui.add(
                 egui::TextEdit::singleline(&mut dialog.name)
                     .id(id)

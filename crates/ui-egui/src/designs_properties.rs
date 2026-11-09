@@ -73,7 +73,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (mut ok, mut cancel, mut choose, mut remove) = (false, false, false, false);
     let ready = !properties.name.trim().is_empty();
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "box", solidcraft_ui_text::tr("designs.project_properties"))
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_properties"), "box", solidcraft_ui_text::tr("designs.project_properties"))
         .cards(2.5)
         .actions(solidcraft_ui_text::tr("designs.ok"), solidcraft_ui_text::tr("designs.cancel"), None)
         .show(ctx, ready, |ui| {
@@ -86,7 +86,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             crate::ui_kit::multiline_text_field(
                 ui,
                 solidcraft_ui_text::tr("designs.description"),
-                egui::Id::new("sc_designs_properties_description"),
+                egui::Id::unique("sc_designs_properties_description"),
                 &mut properties.description,
             );
             // The picture with its two actions beside it, at the top of the row.

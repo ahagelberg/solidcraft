@@ -47,7 +47,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         solidcraft_ui_text::format("designs.move_title", &[("name", &pick.source_name)])
     };
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_folder"), "folder", &title)
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_folder"), "folder", &title)
         .cards(2.5)
         .actions(
             if pick.copy { solidcraft_ui_text::tr("designs.copy_here") } else { solidcraft_ui_text::tr("designs.move_here") },

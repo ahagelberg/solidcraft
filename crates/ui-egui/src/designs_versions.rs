@@ -107,7 +107,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // Saving a version or deleting the others loses work: the card says so in the danger tone.
     let dangerous = matches!(prompt, Prompt::Promote { .. } | Prompt::PurgeOlder { .. });
     let mut answer = None;
-    let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::new("sc_designs_versions"), "box", &title)
+    let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::unique("sc_designs_versions"), "box", &title)
         .tone(if dangerous { crate::ui_kit::Tone::Danger } else { crate::ui_kit::Tone::Info })
         .actions(&go, solidcraft_ui_text::tr("designs.cancel"), None)
         .show(ctx, true, |ui| {

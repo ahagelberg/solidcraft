@@ -67,7 +67,7 @@ fn board_thickness(path: &str) -> Option<f64> {
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.kicad_import.take() else { return };
 
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_kicad_import"), "import", solidcraft_ui_text::tr_label("Open KiCad PCB"))
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_kicad_import"), "import", solidcraft_ui_text::tr_label("Open KiCad PCB"))
         .cards(2.0)
         .fields()
         .actions(solidcraft_ui_text::tr("Open"), solidcraft_ui_text::tr("Cancel"), None)
