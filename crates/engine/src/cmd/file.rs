@@ -2322,10 +2322,10 @@ mod tests {
         let mut reopened = Session::default();
         let opened = reopened.execute("doc.open", &json!({"path":path_text})).unwrap();
         assert_eq!(opened["versions"], json!(2));
-        assert_eq!(reopened.world_state().bodies.len(), 1);
+        assert_eq!(reopened.world_state().unwrap().bodies.len(), 1);
         let older = reopened.execute("doc.open", &json!({"path":path_text,"version":1})).unwrap();
         assert_eq!(older["version"], json!(1));
-        assert_eq!(reopened.world_state().bodies.len(), 1);
+        assert_eq!(reopened.world_state().unwrap().bodies.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
