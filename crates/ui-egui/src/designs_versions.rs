@@ -108,7 +108,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
     };
     let mut answer = None;
-    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_versions"), "box", &title).cards(2.0).show(ctx, true, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_versions"), "box", &title).cards(2.0).show(ctx, true, |ui| {
         ui.set_max_width(380.0);
         ui.label(RichText::new(text).size(12.0).color(t.text));
         ui.add_space(10.0);

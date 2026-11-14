@@ -663,6 +663,15 @@ fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
     let name = app.session.save_as_name();
     save_as_named(app, &name, extension);
 }
+
+pub(crate) fn save_as_named(app: &mut SolveApp, name: &str, extension: &str) {
+    // The Capture Position question first, as Save asks it: the file can't hold a move not
+    // captured yet (#9736).
+    if crate::browser::needs_capture(app, crate::browser::SAVE) {
+        app.tree.capture_prompt = Some(crate::browser::save_as_question(name, extension));
+        return;
+    }
+    let name = format!("{name}.{extension}");
     app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
         // A save under way answers a closing tab when it ends.
         if let Some(path) = path

@@ -181,7 +181,8 @@ impl Writer {
 
     /// Would `entries` more optional parts of `extra` bytes, stored uncompressed, still keep the
     /// file within `budget` and its expanded size within the reader's budget?
-    pub fn room(&self, entries: usize, extra: usize, budget: usize) -> bool {        self.names.len().saturating_add(entries) <= self.limits.max_entries && extra <= self.space(entries, budget)
+    pub fn room(&self, entries: usize, extra: usize, budget: usize) -> bool {
+        self.names.len().saturating_add(entries) <= self.limits.max_entries && extra <= self.space(entries, budget)
     }
 
     /// The bytes `entries` more optional parts may hold together ([`Writer::room`]).

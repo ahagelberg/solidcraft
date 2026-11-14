@@ -222,7 +222,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let width = app.preferences.designs_width.clamp(WIDTH_MIN, WIDTH_MAX);
     let container = crate::ui_kit::Container::new(ui.ctx(), crate::ui_kit::Surface::Panel);
     let panel = container
-        .edge(egui::Id::new("sc_designs"), crate::ui_kit::Edge::Left)
+        .edge(egui::Id::unique("sc_designs"), crate::ui_kit::Edge::Left)
         .default_size(width)
         .size_range(WIDTH_MIN..=WIDTH_MAX)
         .resizable(true)
@@ -730,7 +730,7 @@ fn actions(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             if !tree {
                 let pictures = app.preferences.designs_thumbnails;
-                let (icon, tip) = if pictures { ("grid", "designs.thumbnails_hide") } else { ("list", "designs.thumbnails") };
+                let (icon, tip) = if pictures { ("thumbnails", "designs.thumbnails_hide") } else { ("list", "designs.thumbnails") };
                 if view_button(ui, &t, "designs:view:pictures", icon, tip) {
                     app.preferences.designs_thumbnails = !pictures;
                 }
@@ -920,7 +920,7 @@ fn tree_rows(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 // The disclosure itself opens and closes, as in a file browser.
                 let hit = egui::Rect::from_center_size(pos2(indent, rect.center().y), vec2(16.0, 16.0));
                 crate::scenario::publish_handle(&format!("designs:tree-toggle:{}", row.name), hit.center());
-                if ui.interact(hit, ui.id().with(("designs-tree", row.path.as_str())), Sense::click()).clicked() {
+                if ui.interact(hit, ui.scope_id().with(("designs-tree", row.path.as_str())), Sense::click()).clicked() {
                     toggle = Some(row.path.clone());
                 }
             }
@@ -1065,7 +1065,7 @@ fn row_text(app: &mut SolveApp, ui: &mut egui::Ui, rect: egui::Rect, path: &str,
         egui::Rect::from_min_max(pos2(x, rect.top() + 2.0), pos2(rect.right() - 6.0, rect.bottom() - 2.0))
     };
     if app.designs.rename.as_ref().is_some_and(|r| r.path == path) {
-        let id = egui::Id::new(("designs-rename", path));
+        let id = egui::Id::unique(("designs-rename", path));
         // Read the keys before the text field consumes them (it is focused from the previous
         // frame).
         let focused = ui.memory(|m| m.has_focus(id));
@@ -1240,7 +1240,7 @@ fn version_menu(app: &mut SolveApp, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     let at = pos2((menu.at.x).min(screen.right() - 200.0).max(screen.left()), (menu.at.y).min(screen.bottom() - 70.0).max(screen.top()));
     let area = crate::ui_kit::Container::new(ctx, crate::ui_kit::Surface::Panel)
-        .area(egui::Id::new("designs-version-menu"))
+        .area(egui::Id::unique("designs-version-menu"))
         .order(egui::Order::Foreground)
         .fixed_pos(at)
         .show(ctx, |ui| {
@@ -1407,7 +1407,7 @@ fn apply(app: &mut SolveApp, action: Action) {
 fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(confirm) = app.designs.confirm.clone() else { return };
     let mut answer = None;
-    let _ = crate::ui_kit::Window::new(egui::Id::new("sc_designs_delete"), "delete", crate::i18n::tr("Delete")).cards(2.0).show(ctx, true, |ui| {
+    let _ = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_delete"), "delete", crate::i18n::tr("Delete")).cards(2.0).show(ctx, true, |ui| {
         ui.set_max_width(360.0);
         let text = if confirm.folder {
             crate::i18n::format("designs.delete_folder_confirm", &[("name", &confirm.name)])
@@ -1453,7 +1453,7 @@ fn confirm_delete(app: &mut SolveApp, ctx: &egui::Context) {
 /// The app bar's toggle: a 3x3 grid at `x`, left of the File menu.
 pub fn app_bar_button(app: &mut SolveApp, ui: &mut egui::Ui, bar: egui::Rect, x: f32, idle: bool) -> bool {
     let rect = egui::Rect::from_center_size(pos2(x, bar.center().y), vec2(26.0, 26.0));
-    let response = ui.interact(rect, ui.id().with(("ab", "designs")), if idle { Sense::click() } else { Sense::hover() });
+    let response = ui.interact(rect, ui.scope_id().with(("ab", "designs")), if idle { Sense::click() } else { Sense::hover() });
     crate::scenario::publish_handle("appbar:designs", rect.center());
     crate::scenario::publish_rect("appbar:designs", rect);
     if idle && response.hovered() {
@@ -1466,7 +1466,7 @@ pub fn app_bar_button(app: &mut SolveApp, ui: &mut egui::Ui, bar: egui::Rect, x:
     } else {
         0.7
     };
-    crate::icons::paint_on(ui.painter(), rect.shrink(5.0), "grid", Some(true), opacity);
+    crate::icons::paint_on(ui.painter(), rect.shrink(5.0), "thumbnails", Some(true), opacity);
     idle && response.on_hover_text(crate::i18n::tr("designs.title")).clicked()
 }
 
@@ -1567,7 +1567,7 @@ fn drag_chip(app: &SolveApp, ctx: &egui::Context) {
     let text = crate::i18n::format("designs.drop_insert", &[("name", &payload.name)]);
     let galley = ctx.fonts_mut(|f| f.layout_no_wrap(text, egui::FontId::proportional(12.0), t.text));
     let rect = egui::Rect::from_min_size(at + vec2(16.0, 12.0), galley.size() + vec2(14.0, 8.0));
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("designs-drag-chip")));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("designs-drag-chip")));
     painter.rect_filled(rect, t.radius_sm, t.panel_header);
     painter.rect_stroke(rect, t.radius_sm, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
     painter.galley(rect.min + vec2(7.0, 4.0), galley, t.text);

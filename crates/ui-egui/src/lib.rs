@@ -131,8 +131,6 @@ pub mod local_time;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
 #[cfg(test)]
-mod loft_rails_dialog_tests;
-#[cfg(test)]
 mod look_at_tests;
 #[cfg(test)]
 mod manage_dialogs_tests;

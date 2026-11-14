@@ -68,7 +68,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (mut save, mut cancel) = (false, false);
     let shown = dialog.browser.folder().to_path_buf();
     let ready = dialog.target().is_some();
-    let (closed, action) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_save"), "save", crate::i18n::tr("designs.save_title"))
+    let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_save"), "save", crate::i18n::tr("designs.save_title"))
         .cards(2.5)
         .fields()
         .actions(crate::i18n::tr("ui.save"), crate::i18n::tr("ui.cancel"), None)
@@ -78,7 +78,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             // Copy show, so a save can also go to another repository.
             dialog.browser.show(app, ui);
             ui.add_space(4.0);
-            let id = egui::Id::new("designs-save-name");
+            let id = egui::Id::unique("designs-save-name");
             ui.horizontal(|ui| {
                 ui.label(crate::i18n::tr("designs.name"));
                 let response = ui.add(egui::TextEdit::singleline(&mut dialog.name).id(id).desired_width(240.0));

@@ -8,8 +8,7 @@
 use std::path::Path;
 
 use crate::i18n::LocaleNames as _;
-use crate::ui_kit::{Container, Surface};
-use egui::{FontId, Rect, Sense, pos2, vec2};
+use egui::Rect;
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
 use solidcraft_viewport::Camera;

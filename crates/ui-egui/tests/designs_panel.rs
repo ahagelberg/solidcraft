@@ -370,7 +370,11 @@ fn save_as_stays_in_the_repository_and_starts_where_the_panel_shows() {
         { "until": { "count": { "name": "designs:designs", "value": 1 } } }
     ]))
     .unwrap();
-    assert!(h.dir.join("Parts/plate.solidcraft").is_file(), "saved in the wrong place: {:?}", listing(&h));
+    assert!(
+        h.dir.join("Parts").join(format!("plate.{}", solidcraft_engine::io::DESIGN_EXT)).is_file(),
+        "saved in the wrong place: {:?}",
+        listing(&h)
+    );
     assert!(h.app.save_to_repo.is_none(), "the dialog stayed open after saving");
 
     // The same name again asks first: one click is the question, the second replaces it.

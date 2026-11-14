@@ -36,9 +36,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (mut create, mut cancel) = (false, false);
     let title = crate::i18n::format("designs.new_folder_in", &[("name", &dialog.folder_name)]);
-    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_new_folder"), "folder", &title).cards(2.0).show(ctx, true, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_new_folder"), "folder", &title).cards(2.0).show(ctx, true, |ui| {
         ui.set_min_width(380.0);
-        let id = egui::Id::new("designs-new-folder-name");
+        let id = egui::Id::unique("designs-new-folder-name");
         let response =
             ui.add(egui::TextEdit::singleline(&mut dialog.name).id(id).desired_width(f32::INFINITY).hint_text(crate::i18n::tr("designs.name")));
         crate::scenario::publish_handle("designs:new_folder:name", response.rect.center());

@@ -609,7 +609,8 @@ mod tests {
         let mut doc = solidcraft_doc::Document::new("Versioned");
         doc.name = "first".into();
         let (v1, _) =
-            solidcraft_io::write_design_container_versioned(&doc, solidcraft_io::DesignCompression::Fast, None, None, None, None, None).unwrap();
+            solidcraft_io::write_design_container_versioned(&doc, solidcraft_io::DesignCompression::Fast, None, None, None, None, None, None)
+                .unwrap();
         std::fs::write(&path, &v1).unwrap();
         let mut s = Session::default();
         for name in ["second", "third"] {

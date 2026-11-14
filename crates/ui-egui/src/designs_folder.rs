@@ -47,7 +47,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::i18n::format("designs.move_title", &[("name", &pick.source_name)])
     };
-    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_folder"), "folder", &title).cards(2.5).show(ctx, true, |ui| {
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_folder"), "folder", &title).cards(2.5).show(ctx, true, |ui| {
         ui.set_min_width(460.0);
         ui.label(RichText::new(crate::i18n::tr("designs.folder_pick_note")).size(11.0).color(t.text_dim));
         ui.add_space(4.0);

@@ -1899,7 +1899,8 @@ mod tests {
         assert!(read_design_geometry(&bytes).is_none());
         assert_eq!(crate::read_design(&bytes).unwrap().to_json(), doc.to_json());
         // With room for it, the same model is kept.
-        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, None, crate::MAX_DESIGN_BYTES, None).unwrap().0;
+        let bytes =
+            write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, None, crate::MAX_DESIGN_BYTES, None).unwrap().0;
         assert!(read_design_geometry(&bytes).is_some());
     }
 

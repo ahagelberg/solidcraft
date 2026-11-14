@@ -4,6 +4,10 @@
 
 use solidcraft_ui_text::{Catalog, Locale};
 
+/// The translation helpers under this module's name too, as the Designs browser's modules reach
+/// them (`crate::i18n::tr`); the shared crate owns both.
+pub use solidcraft_ui_text::{format, tr};
+
 static ENGLISH: Catalog = Catalog::new("en", "English", include_str!(concat!(env!("OUT_DIR"), "/locales/en.json")));
 static ARABIC: Catalog = Catalog::new("ar", "العربية", include_str!(concat!(env!("OUT_DIR"), "/locales/ar.json")));
 static BULGARIAN: Catalog = Catalog::new("bg", "Български", include_str!(concat!(env!("OUT_DIR"), "/locales/bg.json")));

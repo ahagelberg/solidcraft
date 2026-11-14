@@ -69,7 +69,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let t = Tokens::get();
     let (mut ok, mut cancel, mut choose, mut remove) = (false, false, false, false);
-    let (closed, _) = crate::ui_kit::Window::new(egui::Id::new("sc_designs_properties"), "box", crate::i18n::tr("designs.project_properties"))
+    let (closed, _) = crate::ui_kit::Window::new(egui::Id::unique("sc_designs_properties"), "box", crate::i18n::tr("designs.project_properties"))
         .cards(2.5)
         .show(ctx, true, |ui| {
             ui.set_min_width(420.0);

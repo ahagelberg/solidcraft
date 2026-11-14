@@ -1687,7 +1687,11 @@ fn write_bytes(
                         .map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
                     (bytes, Some(version))
                 }
-                None => (s.design_container_signed(Some(path), compression, preview, cache, &save).map_err(|e| EngineError::Other(format!("{path}: {e}")))?, Some(1)),
+                None => (
+                    s.design_container_signed(Some(path), compression, preview, cache, &save)
+                        .map_err(|e| EngineError::Other(format!("{path}: {e}")))?,
+                    Some(1),
+                ),
             }
         }
     } else {
@@ -2007,6 +2011,10 @@ impl Session {
         self.provenance.clone_from(&done.provenance);
         self.saved = done.saved.clone();
         self.saved_visibility = done.saved_visibility.clone();
+        // The save may have added the design's first version, or replaced the versions after the
+        // one it was opened from: what the file now holds is what the save's own session knows.
+        self.version = done.version;
+        self.versions = done.versions;
     }
 
     /// The design's file was renamed (browser OPFS rename, or an equivalent host move): keep the
@@ -2124,7 +2132,13 @@ impl Session {
                         thumbnail.as_deref(),
                         save,
                     ),
-                    None => solidcraft_io::write_design_container_with_thumbnail(&design, compression, preview.as_ref(), geometry.as_ref(), thumbnail.as_deref()),
+                    None => solidcraft_io::write_design_container_with_thumbnail(
+                        &design,
+                        compression,
+                        preview.as_ref(),
+                        geometry.as_ref(),
+                        thumbnail.as_deref(),
+                    ),
                 }?;
                 Ok((bytes, 1))
             }

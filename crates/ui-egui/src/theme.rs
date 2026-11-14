@@ -6,9 +6,11 @@ use std::collections::BTreeMap;
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
-use solidcraft_theme::{
-    AccentRamp, Custom, Environment, Fade, PublishedTab, Surfaces, TabAccent, Tokens, is_dark, set_custom, set_published, viewport_dark, vision,
-};
+use solidcraft_theme::{AccentRamp, Custom, Environment, Fade, PublishedTab, Surfaces, TabAccent, set_custom, set_published, viewport_dark, vision};
+
+/// The token set and the dark-mode reading, reachable as `crate::theme::…` (the Designs browser's
+/// modules ask for them that way); the shared crate owns both.
+pub use solidcraft_theme::{Tokens, is_dark};
 
 #[derive(Clone)]
 struct PreparedTheme {
